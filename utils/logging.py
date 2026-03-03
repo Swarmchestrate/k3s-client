@@ -1,4 +1,3 @@
-
 import logging
 import sys
 from typing import Optional
@@ -10,6 +9,7 @@ INFO = logging.INFO
 WARNING = logging.WARNING
 ERROR = logging.ERROR
 CRITICAL = logging.CRITICAL
+
 
 def configure_logging(
     level: int = logging.INFO, log_file: Optional[str] = None

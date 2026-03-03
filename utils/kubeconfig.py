@@ -4,6 +4,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def load_kubeconfig(path=None):
     """Load kubeconfig from file or in-cluster, fallback to default file."""
     try:

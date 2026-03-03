@@ -6,6 +6,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def handle_errors(func):
     def wrapper(*args, **kwargs):
         try:
@@ -15,7 +16,9 @@ def handle_errors(func):
         except Exception as e:
             logger.exception("Error in %s", func.__name__)
             raise K3sClientError(str(e))
+
     return wrapper
+
 
 class PodManager:
     """Manage pods: launch, destroy, list, logs."""
@@ -31,18 +34,29 @@ class PodManager:
         return [p.metadata.name for p in pods.items]
 
     @handle_errors
-    def launch_pod(self, name, image, pod_labels=None, node_labels=None,
-                   namespace=None, container_port=None):
+    def launch_pod(
+        self,
+        name,
+        image,
+        pod_labels=None,
+        node_labels=None,
+        namespace=None,
+        container_port=None,
+    ):
         namespace = namespace or DEFAULT_NAMESPACE
         pod_labels = pod_labels or DEFAULT_LABEL
 
         spec = client.V1PodSpec(
-            containers=[client.V1Container(
-                name=name,
-                image=image,
-                ports=[client.V1ContainerPort(container_port=container_port)] if container_port else None
-            )],
-            node_selector=node_labels
+            containers=[
+                client.V1Container(
+                    name=name,
+                    image=image,
+                    ports=[client.V1ContainerPort(container_port=container_port)]
+                    if container_port
+                    else None,
+                )
+            ],
+            node_selector=node_labels,
         )
         metadata = client.V1ObjectMeta(name=name, labels=pod_labels)
         pod = client.V1Pod(metadata=metadata, spec=spec)

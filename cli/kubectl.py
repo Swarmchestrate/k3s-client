@@ -4,6 +4,7 @@ from ..exceptions import K3sClientError
 
 logger = logging.getLogger(__name__)
 
+
 class Kubectl:
     """wrapper around kubectl CLI for manifest operations."""
 
@@ -19,7 +20,9 @@ class Kubectl:
 
     def _run(self, cmd, input_text=None):
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, input=input_text)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, input=input_text
+            )
             if result.returncode != 0:
                 logger.error("Command failed: %s", result.stderr.strip())
                 raise K3sClientError(result.stderr.strip())
@@ -29,11 +32,17 @@ class Kubectl:
         except Exception as e:
             raise K3sClientError(str(e))
 
-    def apply(self, manifest_path=None, configmap_name=None, namespace=None,
-              from_literal=None, from_file=None):
+    def apply(
+        self,
+        manifest_path=None,
+        configmap_name=None,
+        namespace=None,
+        from_literal=None,
+        from_file=None,
+    ):
         if not self.use_kubectl:
             raise K3sClientError("kubectl CLI usage disabled")
-        
+
         if configmap_name:
             # Build YAML from configmap creation
             create_cmd = self._base_cmd() + ["create", "configmap", configmap_name]
