@@ -1,0 +1,37 @@
+name: Run Pytests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+          pip install pytest
+
+      - name: Run Ruff Lint
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: check .
+
+      - name: Run Ruff Format Check
+        run: ruff format --check .
+
+      - name: Run Pytest
+        run: pytest tests
