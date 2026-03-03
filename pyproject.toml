@@ -8,12 +8,12 @@ version = "0.1.0"
 description = "Swarmchestrate k3s client"
 readme = "README.md"
 authors = [
-    {name = "Gunjan", email = "G.Kotak@westminster.ac.uk"},
+    {name = "Gunjan", email = "G.Kotak@westminster.ac.uk"}
 ]
 license = {text = "Apache2"}
 
 dependencies = [
-  kubernetes>=26.1.0
+ " kubernetes>=26.1.0"
 ]
 
 [tool.setuptools.packages.find]
