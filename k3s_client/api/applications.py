@@ -1,8 +1,9 @@
-from .pods import PodManager
-from ..cli.kubectl import Kubectl
 import logging
-from ..exceptions import K3sClientError
-from ..config import DEFAULT_NAMESPACE
+
+from k3s_client.api.pods import PodManager
+from k3s_client.cli.kubectl import Kubectl
+from k3s_client.exceptions import K3sClientError
+from k3s_client.config import DEFAULT_NAMESPACE
 
 logger = logging.getLogger(__name__)
 

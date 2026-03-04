@@ -1,8 +1,9 @@
 from kubernetes import client
-from ..exceptions import K3sClientError
-from ..config import DEFAULT_LABEL, DEFAULT_NAMESPACE
-from ..utils.kubeconfig import load_kubeconfig
 import logging
+
+from k3s_client.exceptions import K3sClientError
+from k3s_client.config import DEFAULT_LABEL, DEFAULT_NAMESPACE
+from k3s_client.utils.kubeconfig import load_kubeconfig
 
 logger = logging.getLogger(__name__)
 

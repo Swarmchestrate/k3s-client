@@ -1,6 +1,6 @@
 import subprocess
 import logging
-from ..exceptions import K3sClientError
+from k3s_client.exceptions import K3sClientError
 
 logger = logging.getLogger(__name__)
 
