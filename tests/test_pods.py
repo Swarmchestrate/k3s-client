@@ -1,7 +1,6 @@
 import logging
 from unittest.mock import patch, MagicMock
 from k3s_client.api.pods import PodManager
-from k3s_client.exceptions import K3sClientError
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
