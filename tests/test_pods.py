@@ -12,8 +12,10 @@ def test_pod_manager_initialization_sets_v1_attribute():
 
 def test_list_pods_returns_list_of_pod_names():
     """list_pods should return pod names from mocked CoreV1Api."""
-    with patch("k3s_client.api.pods.load_kubeconfig"), \
-         patch("k3s_client.api.pods.client.CoreV1Api") as mock_api:
+    with (
+        patch("k3s_client.api.pods.load_kubeconfig"),
+        patch("k3s_client.api.pods.client.CoreV1Api") as mock_api,
+    ):
         mock_instance = mock_api.return_value
 
         # Mock two pods
@@ -34,8 +36,10 @@ def test_list_pods_returns_list_of_pod_names():
 
 def test_launch_pod_creates_pod_with_correct_parameters():
     """launch_pod should call create_namespaced_pod with correct arguments."""
-    with patch("k3s_client.api.pods.load_kubeconfig"), \
-         patch("k3s_client.api.pods.client.CoreV1Api") as mock_api:
+    with (
+        patch("k3s_client.api.pods.load_kubeconfig"),
+        patch("k3s_client.api.pods.client.CoreV1Api") as mock_api,
+    ):
         mock_instance = mock_api.return_value
         mock_instance.create_namespaced_pod.return_value = None
 
@@ -52,8 +56,10 @@ def test_launch_pod_creates_pod_with_correct_parameters():
 
 def test_destroy_pod_deletes_named_pod():
     """destroy_pod should call delete_namespaced_pod for a single named pod."""
-    with patch("k3s_client.api.pods.load_kubeconfig"), \
-         patch("k3s_client.api.pods.client.CoreV1Api") as mock_api:
+    with (
+        patch("k3s_client.api.pods.load_kubeconfig"),
+        patch("k3s_client.api.pods.client.CoreV1Api") as mock_api,
+    ):
         mock_instance = mock_api.return_value
         mock_instance.delete_namespaced_pod.return_value = None
 
@@ -67,8 +73,10 @@ def test_destroy_pod_deletes_named_pod():
 
 def test_destroy_pod_deletes_multiple_pods_by_label_selector():
     """destroy_pod should delete all pods matching the given label selector."""
-    with patch("k3s_client.api.pods.load_kubeconfig"), \
-         patch("k3s_client.api.pods.client.CoreV1Api") as mock_api:
+    with (
+        patch("k3s_client.api.pods.load_kubeconfig"),
+        patch("k3s_client.api.pods.client.CoreV1Api") as mock_api,
+    ):
         mock_instance = mock_api.return_value
 
         # Mock pods returned by list_namespaced_pod
