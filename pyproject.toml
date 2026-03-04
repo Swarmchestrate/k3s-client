@@ -18,5 +18,5 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["k3s-client*"]
+include = ["k3s_client*"]
 
