@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ name }}
+spec:
+  replicas: {{ replicas }}
+  selector:
+    matchLabels:
+{% for key, value in labels.items() %}
+      {{ key }}: {{ value }}
+{% endfor %}
+  template:
+    metadata:
+      labels:
+{% for key, value in labels.items() %}
+        {{ key }}: {{ value }}
+{% endfor %}
+{% if annotations %}
+      annotations:
+{% for key, value in annotations.items() %}
+        {{ key }}: "{{ value }}"
+{% endfor %}
+{% endif %}
+    spec:
+{% if image_pull_secret %}
+      imagePullSecrets:
+        - name: {{ image_pull_secret }}
+{% endif %}
+
+{% if node_selector %}
+      nodeSelector:
+{% for key, value in node_selector.items() %}
+        {{ key }}: {{ value }}
+{% endfor %}
+{% endif %}
+
+{% if service_account %}
+      serviceAccountName: {{ service_account }}
+{% endif %}
+
+      containers:
+        - name: {{ name }}
+          image: {{ image }}
+
+{% if env_list %}
+          env:
+{% for e in env_list %}
+            - name: {{ e.name }}
+              value: "{{ e.value }}"
+{% endfor %}
+{% endif %}
+
+{% if container_ports %}
+          ports:
+{% for p in container_ports %}
+            - containerPort: {{ p.containerPort }}
+              protocol: {{ p.protocol }}
+{% endfor %}
+{% endif %}
+
+{% if volume_mounts %}
+          volumeMounts:
+{% for m in volume_mounts %}
+            - name: {{ m.name }}
+              mountPath: {{ m.mountPath }}
+{% endfor %}
+{% endif %}
+
+{% if volumes %}
+      volumes:
+{% for v in volumes %}
+        - {{ v | tojson }}
+{% endfor %}
+{% endif %}
