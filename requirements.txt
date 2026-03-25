@@ -1,1 +1,5 @@
 kubernetes>=26.1.0
+jinja2>=3.1.6
+Sardou==0.9.1
+ruamel.yaml>=0.17.21
+pytest>=7.0.0
