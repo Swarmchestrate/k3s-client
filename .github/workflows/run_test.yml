@@ -1,13 +1,16 @@
-name: Run Pytests
+name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: ["main"]
   pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  check:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,21 +20,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: Install package
+      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .
-          pip install pytest
+          make install
 
-      - name: Run Ruff Lint
-        uses: astral-sh/ruff-action@v3
-        with:
-          args: check .
+      - name: Run tests
+        run: make test
 
-      - name: Run Ruff Format Check
+      - name: Run lint
+        run: make lint
+
+      - name: Run formatter check
         run: ruff format --check .
-
-      - name: Run Pytest
-        run: pytest tests
