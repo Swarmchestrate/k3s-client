@@ -26,22 +26,24 @@ spec:
       imagePullSecrets:
         - name: {{ image_pull_secret }}
 {% endif %}
-
 {% if node_selector %}
       nodeSelector:
 {% for key, value in node_selector.items() %}
         {{ key }}: {{ value }}
 {% endfor %}
 {% endif %}
-
 {% if service_account %}
       serviceAccountName: {{ service_account }}
 {% endif %}
-
       containers:
         - name: {{ name }}
           image: {{ image }}
-
+{% if args %}
+          args:
+{% for arg in args %}
+            - "{{ arg }}"
+{% endfor %}
+{% endif %}
 {% if env_list %}
           env:
 {% for e in env_list %}
@@ -49,7 +51,6 @@ spec:
               value: "{{ e.value }}"
 {% endfor %}
 {% endif %}
-
 {% if container_ports %}
           ports:
 {% for p in container_ports %}
@@ -57,7 +58,6 @@ spec:
               protocol: {{ p.protocol }}
 {% endfor %}
 {% endif %}
-
 {% if volume_mounts %}
           volumeMounts:
 {% for m in volume_mounts %}
@@ -65,7 +65,6 @@ spec:
               mountPath: {{ m.mountPath }}
 {% endfor %}
 {% endif %}
-
 {% if volumes %}
       volumes:
 {% for v in volumes %}
