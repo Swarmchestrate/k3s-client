@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ name }}-{{ version }}"
+  labels:
+    app: "{{ labels.app | default(name) }}"
+    version: "{{ version }}"
+    service: "{{ labels.app | default(name) }}"
+spec:
+  replicas: {{ replicas }}
+  selector:
+    matchLabels:
+      app: "{{ labels.app | default(name) }}"
+      version: "{{ version }}"
+      service: "{{ labels.app | default(name) }}"
+  template:
+    metadata:
+      labels:
+        app: "{{ labels.app | default(name) }}"
+        version: "{{ version }}"
+        service: "{{ labels.app | default(name) }}"
+      {% if annotations %}
+      annotations:
+        {% for k, v in annotations.items() %}
+        {{ k }}: "{{ v }}"
+        {% endfor %}
+      {% endif %}
+    spec:
+      {% if service_account %}
+      serviceAccountName: "{{ service_account }}"
+      {% endif %}
+      {% if image_pull_secret %}
+      imagePullSecrets:
+        - name: "{{ image_pull_secret }}"
+      {% endif %}
+      {% if node_selector %}
+      nodeSelector:
+        {% for k, v in node_selector.items() %}
+        {{ k }}: "{{ v }}"
+        {% endfor %}
+      {% endif %}
+      containers:
+        - name: "{{ name }}-{{ version }}"
+          image: "{{ image }}"
+          {% if args %}
+          args:
+            {% for a in args %}
+            - "{{ a }}"
+            {% endfor %}
+          {% endif %}
+          {% if env_list %}
+          env:
+            {% for e in env_list %}
+            - name: "{{ e.name }}"
+              value: "{{ e.value }}"
+            {% endfor %}
+          {% endif %}
+          {% if container_ports %}
+          ports:
+            {% for p in container_ports %}
+            - containerPort: {{ p.containerPort }}
+              protocol: "{{ p.protocol }}"
+            {% endfor %}
+          {% endif %}
+          {% if volume_mounts %}
+          volumeMounts:
+            {% for vm in volume_mounts %}
+            - name: "{{ vm.name }}"
+              mountPath: "{{ vm.mountPath }}"
+            {% endfor %}
+          {% endif %}
+      {% if volumes %}
+      volumes:
+        {% for v in volumes %}
+        - name: "{{ v.name }}"
+          {% if v.emptyDir is defined %}
+          emptyDir: {}
+          {% elif v.configMap is defined %}
+          configMap:
+            name: "{{ v.configMap.name }}"
+          {% elif v.secret is defined %}
+          secret:
+            secretName: "{{ v.secret.secretName }}"
+          {% elif v.persistentVolumeClaim is defined %}
+          persistentVolumeClaim:
+            claimName: "{{ v.persistentVolumeClaim.claimName }}"
+          {% endif %}
+        {% endfor %}
+      {% endif %}
