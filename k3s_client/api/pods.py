@@ -32,7 +32,9 @@ class PodManager:
     @handle_errors
     def list_pods(self, namespace=None, label_selector=None):
         namespace = namespace or self.default_namespace
-        pods = self.v1.list_namespaced_pod(namespace=namespace, label_selector=label_selector)
+        pods = self.v1.list_namespaced_pod(
+            namespace=namespace, label_selector=label_selector
+        )
         return [p.metadata.name for p in pods.items]
 
     @handle_errors
@@ -73,7 +75,9 @@ class PodManager:
             return f"Pod {pod_name} deleted from {namespace}"
 
         if pod_label:
-            pods = self.v1.list_namespaced_pod(namespace=namespace, label_selector=pod_label)
+            pods = self.v1.list_namespaced_pod(
+                namespace=namespace, label_selector=pod_label
+            )
             for p in pods.items:
                 self.v1.delete_namespaced_pod(name=p.metadata.name, namespace=namespace)
             return f"Pods {pod_label} deleted from {namespace}"
@@ -84,7 +88,9 @@ class PodManager:
     def get_pod_node_mapping(self, namespace=None, label_selector=None):
         """Get mapping of pod names to node names."""
         namespace = namespace or self.default_namespace
-        pods = self.v1.list_namespaced_pod(namespace=namespace, label_selector=label_selector)
+        pods = self.v1.list_namespaced_pod(
+            namespace=namespace, label_selector=label_selector
+        )
         mapping = {}
         for pod in pods.items:
             pod_name = pod.metadata.name

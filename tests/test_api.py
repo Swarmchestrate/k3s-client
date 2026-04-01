@@ -73,7 +73,7 @@ def test_launch_pod_on_specific_node():
         mock_instance.create_namespaced_pod.assert_called_once()
         # Check that node_name was set in the pod spec
         call_args = mock_instance.create_namespaced_pod.call_args
-        pod_body = call_args[1]['body']  # kwargs
+        pod_body = call_args[1]["body"]  # kwargs
         assert pod_body.spec.node_name == "node-1"
         assert "node-1" in result
 
@@ -201,6 +201,3 @@ def test_application_get_pod_node_mapping():
         pm = PodManager()
         mapping = pm.get_pod_node_mapping(namespace="default")
         assert mapping == {"pod1": "node-1", "pod2": "node-2"}
-
-
-

@@ -29,7 +29,7 @@ def get_kubernetes_manifest(
     *,
     tosca_file: Optional[str] = None,
     tosca_content: Optional[str] = None,
-    image_pull_secret: Optional[str] = None
+    image_pull_secret: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     if tosca_file:
         tosca_content = Path(tosca_file).read_text(encoding="utf-8")
@@ -37,7 +37,9 @@ def get_kubernetes_manifest(
         raise ValueError("Provide either tosca_file or tosca_content")
 
     tosca = Sardou(content=tosca_content)
-    node_templates = tosca.raw._to_dict().get("service_template", {}).get("node_templates", {})
+    node_templates = (
+        tosca.raw._to_dict().get("service_template", {}).get("node_templates", {})
+    )
 
     if not node_templates:
         raise ValueError("No node_templates found in TOSCA YAML")
@@ -84,14 +86,22 @@ def get_kubernetes_manifest(
             node_port = p.get("nodePort")
 
             container_ports.append({"containerPort": container, "protocol": protocol})
-            sp = {"name": f"port-{port}", "port": port, "targetPort": target, "protocol": protocol}
+            sp = {
+                "name": f"port-{port}",
+                "port": port,
+                "targetPort": target,
+                "protocol": protocol,
+            }
             if node_port:
                 sp["nodePort"] = int(node_port)
             service_ports.append(sp)
 
         # Volumes — normalise mount_path → mountPath, auto-fill emptyDir
         volume_mounts = [
-            {"name": vm["name"], "mountPath": vm.get("mountPath") or vm.get("mount_path", "")}
+            {
+                "name": vm["name"],
+                "mountPath": vm.get("mountPath") or vm.get("mount_path", ""),
+            }
             for vm in (props.get("volume_mounts") or [])
         ]
         volumes = list(props.get("volumes") or [])
@@ -120,13 +130,17 @@ def get_kubernetes_manifest(
 
         # One service per unique app_name — covers multi-version deployments
         if service_ports and app_name not in pending_services:
-            svc_type = "NodePort" if any("nodePort" in sp for sp in service_ports) else "ClusterIP"
+            svc_type = (
+                "NodePort"
+                if any("nodePort" in sp for sp in service_ports)
+                else "ClusterIP"
+            )
             pending_services[app_name] = {
                 "name": app_name,
                 "service_type": svc_type,
                 "service_ports": service_ports,
                 "selector": {"app": app_name},
-    }
+            }
             # Emit all services after all deployments
     for svc_context in pending_services.values():
         manifests.append(_render_yaml("service.yaml.j2", svc_context))

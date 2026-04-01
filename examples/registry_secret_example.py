@@ -7,7 +7,7 @@ def create_registry_secret_example(
     password: str = "pass",
     email: str = "user@example.com",
     namespace: str = "default",
-    secret_name: str = "my-registry-secret"
+    secret_name: str = "my-registry-secret",
 ) -> str:
     """
     Create a registry secret for pulling private images.

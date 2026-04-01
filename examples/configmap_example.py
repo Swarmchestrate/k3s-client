@@ -1,5 +1,6 @@
 from k3s_client.api.applications import ApplicationManager
 
+
 def create_configmap_example(namespace: str = "default") -> str:
     """
     Create an example ConfigMap in the given namespace.
@@ -22,6 +23,7 @@ def create_configmap_example(namespace: str = "default") -> str:
 
     print("ConfigMap create output:", output)
     return cm_name
+
 
 # Example usage (can be imported and called from another script):
 # cm_name = create_configmap_example(namespace="default")

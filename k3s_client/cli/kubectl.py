@@ -11,7 +11,12 @@ logger = logging.getLogger(__name__)
 class Kubectl:
     """Wrapper around kubectl CLI for manifest, configmap, and secret operations."""
 
-    def __init__(self, kubeconfig: Optional[str] = None, default_namespace: str = "default", use_kubectl: bool = True):
+    def __init__(
+        self,
+        kubeconfig: Optional[str] = None,
+        default_namespace: str = "default",
+        use_kubectl: bool = True,
+    ):
         self.kubeconfig = kubeconfig
         self.default_namespace = default_namespace
         self.use_kubectl = use_kubectl
@@ -65,7 +70,16 @@ class Kubectl:
     ) -> str:
         """Create a configmap from literals or files."""
         namespace = namespace or self.default_namespace
-        cmd = self._base_cmd() + ["create", "configmap", name, "-n", namespace, "--dry-run=client", "-o", "yaml"]
+        cmd = self._base_cmd() + [
+            "create",
+            "configmap",
+            name,
+            "-n",
+            namespace,
+            "--dry-run=client",
+            "-o",
+            "yaml",
+        ]
 
         for lit in from_literal or []:
             cmd += ["--from-literal", lit]
@@ -74,7 +88,9 @@ class Kubectl:
 
         # Generate YAML and apply
         yaml_output = self._run(cmd)
-        return self._run(self._base_cmd() + ["apply", "-f", "-"], input_text=yaml_output)
+        return self._run(
+            self._base_cmd() + ["apply", "-f", "-"], input_text=yaml_output
+        )
 
     def delete_configmap(self, name: str, namespace: Optional[str] = None) -> str:
         """Delete a configmap by name."""

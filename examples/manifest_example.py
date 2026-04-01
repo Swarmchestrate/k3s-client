@@ -1,4 +1,3 @@
-
 from k3s_client.utils.manifest import get_kubernetes_manifest
 from ruamel.yaml import YAML
 from io import StringIO
@@ -9,7 +8,9 @@ OUTPUT_FILE = "generated-manifests.yaml"
 IMAGE_PULL_SECRET = "my-registry-secret"
 
 # Generate manifests from TOSCA
-manifests = get_kubernetes_manifest(tosca_file=TOSCA_FILE, image_pull_secret=IMAGE_PULL_SECRET)
+manifests = get_kubernetes_manifest(
+    tosca_file=TOSCA_FILE, image_pull_secret=IMAGE_PULL_SECRET
+)
 
 # Dump to YAML file
 yaml = YAML()
