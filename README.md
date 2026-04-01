@@ -20,7 +20,7 @@ A lightweight Python client for managing microservices on Kubernetes k3s cluster
 
 - Python **3.12** or higher
 - A running **k3s** cluster with a valid kubeconfig (default: `~/.kube/config`)
-- `kubectl` installed and accessible on `$PATH`
+- `kubectl` installed
 
 ---
 
