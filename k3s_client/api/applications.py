@@ -157,6 +157,115 @@ class ApplicationManager:
         )
 
     @handle_errors
+    def create_microservice(
+        self,
+        deployment_name,
+        image,
+        container_name="app",
+        replicas=1,
+        namespace=None,
+        labels=None,
+        env=None,
+        ports=None,
+        node_selector=None,
+        service_type="ClusterIP",
+    ):
+        """Create a new microservice deployment and optional service."""
+        namespace = namespace or self.default_namespace
+        labels = labels or {"app": deployment_name}
+        logger.info(
+            "Creating microservice %s in namespace %s",
+            deployment_name,
+            namespace,
+        )
+
+        env_vars = [
+            client.V1EnvVar(name=name, value=str(value))
+            for name, value in (env or {}).items()
+        ]
+
+        container_ports = []
+        service_ports = []
+        for port in ports or []:
+            if isinstance(port, int):
+                port_context = {"port": port, "targetPort": port}
+            else:
+                port_context = port
+
+            service_port = int(port_context.get("port", 0))
+            target_port = int(port_context.get("targetPort", service_port))
+            protocol = str(port_context.get("protocol", "TCP")).upper()
+            node_port = port_context.get("nodePort")
+
+            container_ports.append(
+                client.V1ContainerPort(
+                    container_port=target_port,
+                    protocol=protocol,
+                )
+            )
+
+            service_port_obj = client.V1ServicePort(
+                name=f"port-{service_port}",
+                port=service_port,
+                target_port=target_port,
+                protocol=protocol,
+            )
+            if node_port is not None:
+                service_port_obj.node_port = int(node_port)
+            service_ports.append(service_port_obj)
+
+        container = client.V1Container(
+            name=container_name,
+            image=image,
+            ports=container_ports or None,
+            env=env_vars or None,
+        )
+
+        pod_spec = client.V1PodSpec(
+            containers=[container],
+            node_selector=node_selector or None,
+        )
+
+        template = client.V1PodTemplateSpec(
+            metadata=client.V1ObjectMeta(labels=labels),
+            spec=pod_spec,
+        )
+
+        deployment_spec = client.V1DeploymentSpec(
+            replicas=replicas,
+            selector=client.V1LabelSelector(match_labels=labels),
+            template=template,
+        )
+
+        deployment = client.V1Deployment(
+            metadata=client.V1ObjectMeta(name=deployment_name, labels=labels),
+            spec=deployment_spec,
+        )
+
+        self.apps_v1.create_namespaced_deployment(
+            namespace=namespace, body=deployment
+        )
+        logger.info("Deployment %s created in %s", deployment_name, namespace)
+
+        result = [f"Deployment {deployment_name} created in {namespace}"]
+
+        if service_ports:
+            service_spec = client.V1ServiceSpec(
+                type=service_type,
+                selector=labels,
+                ports=service_ports,
+            )
+            service = client.V1Service(
+                metadata=client.V1ObjectMeta(name=deployment_name, labels=labels),
+                spec=service_spec,
+            )
+            self.v1.create_namespaced_service(namespace=namespace, body=service)
+            logger.info("Service %s created in %s", deployment_name, namespace)
+            result.append(f"Service {deployment_name} created in {namespace}")
+
+        return "\n".join(result)
+
+    @handle_errors
     def delete_microservice(self, app_label, namespace=None):
         namespace = namespace or self.default_namespace
         logger.info(
