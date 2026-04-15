@@ -10,6 +10,7 @@ PORTS = [{"port": 80, "targetPort": 80, "nodePort": 30080}]
 ENV = {"EXAMPLE_VAR": "example-value"}
 NODE_SELECTOR = None
 SERVICE_TYPE = "NodePort"
+KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml"
 
 
 def deploy_microservice_example(
@@ -74,4 +75,5 @@ if __name__ == "__main__":
         ports=PORTS,
         node_selector=NODE_SELECTOR,
         service_type=SERVICE_TYPE,
+        kubeconfig_path=KUBECONFIG_PATH,
     )

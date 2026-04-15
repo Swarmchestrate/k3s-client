@@ -3,6 +3,7 @@ from k3s_client.api.applications import ApplicationManager
 NAMESPACE = "default"
 CONFIGMAP_NAME = "example-configmap"
 LITERAL_DATA = ["key1=value1", "key2=value2"]
+KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml"
 
 
 def create_configmap_example(
@@ -33,4 +34,7 @@ def create_configmap_example(
 
 
 if __name__ == "__main__":
-    create_configmap_example(namespace=NAMESPACE)
+    create_configmap_example(
+        namespace=NAMESPACE,
+        kubeconfig_path=KUBECONFIG_PATH,
+    )

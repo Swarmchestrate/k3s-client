@@ -1,6 +1,7 @@
 from k3s_client.api.applications import ApplicationManager
 
 MANIFEST_FILE = "generated-manifests.yaml"
+KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml"
 
 
 def delete_manifest_example(
@@ -24,4 +25,7 @@ def delete_manifest_example(
 
 
 if __name__ == "__main__":
-    delete_manifest_example(manifest_file=MANIFEST_FILE)
+    delete_manifest_example(
+        manifest_file=MANIFEST_FILE,
+        kubeconfig_path=KUBECONFIG_PATH,
+    )

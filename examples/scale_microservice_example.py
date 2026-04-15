@@ -3,6 +3,7 @@ from k3s_client.api.applications import ApplicationManager
 DEPLOYMENT_NAME = "my-app"
 REPLICAS = 3
 NAMESPACE = "default"
+KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml"
 
 
 def scale_microservice_example(
@@ -36,4 +37,5 @@ if __name__ == "__main__":
         deployment_name=DEPLOYMENT_NAME,
         replicas=REPLICAS,
         namespace=NAMESPACE,
+        kubeconfig_path=KUBECONFIG_PATH,
     )

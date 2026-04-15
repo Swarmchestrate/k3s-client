@@ -4,6 +4,7 @@ DEPLOYMENT_NAME = "my-app"
 CONTAINER_NAME = "app"
 NEW_IMAGE = "nginx:1.25"
 NAMESPACE = "default"
+KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml"
 
 
 def update_microservice_image_example(
@@ -43,4 +44,5 @@ if __name__ == "__main__":
         container_name=CONTAINER_NAME,
         new_image=NEW_IMAGE,
         namespace=NAMESPACE,
+        kubeconfig_path=KUBECONFIG_PATH,
     )

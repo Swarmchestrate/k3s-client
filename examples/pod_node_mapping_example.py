@@ -2,6 +2,7 @@ from k3s_client.api.applications import ApplicationManager
 
 NAMESPACE = "default"
 LABEL_SELECTOR = None
+KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml"
 
 
 def pod_node_mapping_example(
@@ -29,4 +30,8 @@ def pod_node_mapping_example(
 
 
 if __name__ == "__main__":
-    pod_node_mapping_example(namespace=NAMESPACE, label_selector=LABEL_SELECTOR)
+    pod_node_mapping_example(
+        namespace=NAMESPACE,
+        label_selector=LABEL_SELECTOR,
+        kubeconfig_path=KUBECONFIG_PATH,
+    )

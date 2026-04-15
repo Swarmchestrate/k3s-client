@@ -3,6 +3,7 @@ from k3s_client.api.applications import ApplicationManager
 DEPLOYMENT_NAME = "my-app"
 NODE_SELECTOR = {"node-type": "high-memory"}
 NAMESPACE = "default"
+KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml"
 
 
 def migrate_microservice_node_example(
@@ -43,4 +44,5 @@ if __name__ == "__main__":
         deployment_name=DEPLOYMENT_NAME,
         node_selector=NODE_SELECTOR,
         namespace=NAMESPACE,
+        kubeconfig_path=KUBECONFIG_PATH,
     )

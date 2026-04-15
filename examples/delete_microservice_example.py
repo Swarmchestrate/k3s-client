@@ -2,6 +2,7 @@ from k3s_client.api.applications import ApplicationManager
 
 APP_LABEL = "my-app"
 NAMESPACE = "default"
+KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml"
 
 
 def delete_microservice_example(
@@ -27,4 +28,8 @@ def delete_microservice_example(
 
 
 if __name__ == "__main__":
-    delete_microservice_example(app_label=APP_LABEL, namespace=NAMESPACE)
+    delete_microservice_example(
+        app_label=APP_LABEL,
+        namespace=NAMESPACE,
+        kubeconfig_path=KUBECONFIG_PATH,
+    )

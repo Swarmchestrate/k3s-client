@@ -6,6 +6,7 @@ PASSWORD = "pass"
 EMAIL = "user@example.com"
 NAMESPACE = "default"
 SECRET_NAME = "my-registry-secret"
+KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml"
 
 
 def create_registry_secret_example(
@@ -53,4 +54,5 @@ if __name__ == "__main__":
         email=EMAIL,
         namespace=NAMESPACE,
         secret_name=SECRET_NAME,
+        kubeconfig_path=KUBECONFIG_PATH,
     )
