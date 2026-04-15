@@ -247,9 +247,7 @@ class ApplicationManager:
             spec=deployment_spec,
         )
 
-        self.apps_v1.create_namespaced_deployment(
-            namespace=namespace, body=deployment
-        )
+        self.apps_v1.create_namespaced_deployment(namespace=namespace, body=deployment)
         logger.info("Deployment %s created in %s", deployment_name, namespace)
 
         result = [f"Deployment {deployment_name} created in {namespace}"]
@@ -325,9 +323,7 @@ class ApplicationManager:
                 if exc.status != 404:
                     raise
 
-        return (
-            f"Deleted {deleted_deployments} deployments and {deleted_services} services for {app_label}"
-        )
+        return f"Deleted {deleted_deployments} deployments and {deleted_services} services for {app_label}"
 
     @handle_errors
     def update_microservice_image(

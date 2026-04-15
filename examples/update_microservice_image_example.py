@@ -34,7 +34,9 @@ def update_microservice_image_example(
         new_image=new_image,
         namespace=namespace,
     )
-    print(f"✅ Updated deployment {deployment_name}: set {container_name} image to {new_image}")
+    print(
+        f"✅ Updated deployment {deployment_name}: set {container_name} image to {new_image}"
+    )
     return str(result)
 
 
