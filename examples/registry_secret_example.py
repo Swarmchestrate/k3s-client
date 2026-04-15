@@ -1,13 +1,18 @@
 from k3s_client.api.applications import ApplicationManager
 
+REGISTRY = "index.docker.io"
+USERNAME = "user"
+PASSWORD = "pass"
+NAMESPACE = "default"
+SECRET_NAME = "my-registry-secret"
+
 
 def create_registry_secret_example(
-    registry: str = "index.docker.io",
-    username: str = "user",
-    password: str = "pass",
-    email: str = "user@example.com",
-    namespace: str = "default",
-    secret_name: str = "my-registry-secret",
+    registry: str = REGISTRY,
+    username: str = USERNAME,
+    password: str = PASSWORD,
+    namespace: str = NAMESPACE,
+    secret_name: str = SECRET_NAME,
 ) -> str:
     """
     Create a registry secret for pulling private images.
@@ -16,7 +21,6 @@ def create_registry_secret_example(
         registry: Docker registry URL (e.g., "index.docker.io", "my-registry.com")
         username: Registry username
         password: Registry password
-        email: User email
         namespace: Kubernetes namespace
         secret_name: Name for the secret
 
@@ -29,17 +33,18 @@ def create_registry_secret_example(
         registry=registry,
         username=username,
         password=password,
-        email=email,
         namespace=namespace,
     )
     print(f"Registry secret created: {result}")
     return result
 
 
-# Example usage (can be imported and called from another script):
-# result = create_registry_secret_example(
-#     registry="my-registry.com",
-#     username="myuser",
-#     password="mypass",
-#     namespace="production"
-# )
+if __name__ == "__main__":
+    create_registry_secret_example(
+        registry=REGISTRY,
+        username=USERNAME,
+        password=PASSWORD,
+        email=EMAIL,
+        namespace=NAMESPACE,
+        secret_name=SECRET_NAME,
+    )
