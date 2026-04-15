@@ -68,6 +68,9 @@ def get_kubernetes_manifest(
         k3s_name_base = re.sub(rf"-{re.escape(version)}$", "", k3s_name)
 
         replicas = int(props.get("replicas", 1))
+        command = props.get("command", []) or []
+        if isinstance(command, str):
+            command = [command]
         args = props.get("args", []) or []
         env_list = [
             {"name": e["name"], "value": str(e.get("value", ""))}
@@ -115,6 +118,7 @@ def get_kubernetes_manifest(
             "version": version,
             "replicas": replicas,
             "image": image,
+            "command": command,
             "args": args,
             "env_list": env_list,
             "container_ports": container_ports,
