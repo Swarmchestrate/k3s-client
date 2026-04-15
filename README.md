@@ -19,7 +19,7 @@ A lightweight Python client for managing microservices on Kubernetes k3s cluster
 ## Prerequisites
 
 - Python **3.12** or higher
-- A running **k3s** cluster with a valid kubeconfig (default: `~/.kube/config`)
+- A running **k3s server** with a valid kubeconfig (default: `~/.kube/config`)
 - `kubectl` installed
 
 ---
@@ -37,14 +37,17 @@ This will install all dependencies and the Puccini TOSCA parser required for man
 
 ## Methods
 
-### `ApplicationManager` — `k3s_client.api.applications`
+### `ApplicationManager`
 
 | Method | Parameters | Description |
 |--------|------------|-------------|
 | `create_registry_secret` | `name`, `registry`, `username`, `password`, `namespace=None`, `replace=True` | Create a Docker registry pull secret |
 | `create_configmap` | `name`, `namespace=None`, `from_literal=None`, `from_file=None` | Create a ConfigMap from literals or files |
+| `delete_configmap` | `name`, `namespace=None` | Delete a ConfigMap by name |
+| `create_registry_secret` | `name`, `registry`, `username`, `password`, `namespace=None`, `replace=True` | Create a Docker registry pull secret |
 | `apply_manifest` | `manifest_file`, `namespace=None` | Apply a Kubernetes manifest via kubectl |
 | `delete_manifest` | `manifest_file` | Delete resources defined in a manifest |
+| `create_microservice` | `deployment_name`, `image`, `container_name='app'`, `replicas=1`, `namespace=None`, `labels=None`, `env=None`, `ports=None`, `node_selector=None`, `service_type='ClusterIP'` | Create a new deployment and optional service |
 | `scale_microservice` | `deployment_name`, `replicas`, `namespace=None` | Scale a deployment |
 | `update_microservice_image` | `deployment_name`, `container_name`, `new_image`, `namespace=None` | Update a container image in-place |
 | `migrate_microservice_node` | `deployment_name`, `node_selector`, `namespace=None` | Migrate a deployment to a different node |
@@ -53,16 +56,16 @@ This will install all dependencies and the Puccini TOSCA parser required for man
 
 ---
 
-### `PodManager` — `k3s_client.api.pods`
+### `PodManager`
 
 | Method | Parameters | Description |
 |--------|------------|-------------|
 | `list_pods` | `namespace=None`, `label_selector=None` | List pods, optionally filtered by label |
-| `launch_pod` | `name`, `image`, `pod_labels=None`, `node_labels=None`, `node_name=None`, `namespace=None`, `container_port=None` | Launch a pod with optional node affinity |
+| `launch_pod` | `name`, `image`, `pod_labels=None`, `node_labels=None`, `node_name=None`, `namespace=None`, `container_port=None` | Launch a pod for internal testing with optional node affinity |
 
 ---
 
-### `get_kubernetes_manifest` — `k3s_client.utils.manifest`
+### `get_kubernetes_manifest`
 
 | Function | Parameters | Description |
 |----------|------------|-------------|
@@ -70,7 +73,7 @@ This will install all dependencies and the Puccini TOSCA parser required for man
 
 ---
 
-### `Kubectl` — `k3s_client.cli.kubectl`
+### `Kubectl`
 
 | Method | Parameters | Description |
 |--------|------------|-------------|
@@ -87,13 +90,20 @@ The `examples/` directory contains complete runnable scripts:
 |------|-------------|
 | `registry_secret_example.py` | Managing Docker registry secrets |
 | `configmap_example.py` | Creating ConfigMaps from literals and files |
-| `manifest_example.py` | Generating and applying manifests |
-| `microservice_example.py` | Scaling, migrating, and updating microservices |
+| `manifest_example.py` | Generating Kubernetes manifests from TOSCA definitions |
+| `manifest_apply_example.py` | Applying a generated manifest to the cluster |
+| `manifest_delete_example.py` | Deleting resources defined in a manifest |
+| `deploy_microservice_example.py` | Create a new deployment and optional service |
+| `scale_microservice_example.py` | Scale a deployment by replica count |
+| `update_microservice_image_example.py` | Update a deployment container image |
+| `migrate_microservice_node_example.py` | Migrate a deployment to specific nodes |
+| `delete_microservice_example.py` | Delete a microservice deployment and service |
+| `pod_node_mapping_example.py` | Show pod-to-node mapping for a namespace |
 
 Run any example:
 
 ```bash
-python examples/microservice_example.py
+python examples/scale_microservice_example.py
 ```
 
 ---
@@ -116,4 +126,4 @@ Licensed under the [Apache License 2.0](LICENSE).
 
 ## Contact
 
-For questions or feedback: [G.Kotak@westminster.ac.uk](mailto:G.Kotak@westminster.ac.uk)
+For questions or feedback, reach out to [G.Kotak@westminster.ac.uk](mailto:G.Kotak@westminster.ac.uk)
