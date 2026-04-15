@@ -12,6 +12,7 @@ def create_registry_secret_example(
     registry: str = REGISTRY,
     username: str = USERNAME,
     password: str = PASSWORD,
+    email: str | None = EMAIL,
     namespace: str = NAMESPACE,
     secret_name: str = SECRET_NAME,
     kubeconfig_path: str | None = None,
@@ -23,6 +24,7 @@ def create_registry_secret_example(
         registry: Docker registry URL (e.g., "index.docker.io", "my-registry.com")
         username: Registry username
         password: Registry password
+        email: Optional email address for the registry secret
         namespace: Kubernetes namespace
         secret_name: Name for the secret
         kubeconfig_path: Optional path to a kubeconfig file.
@@ -36,6 +38,7 @@ def create_registry_secret_example(
         registry=registry,
         username=username,
         password=password,
+        email=email,
         namespace=namespace,
     )
     print(f"Registry secret created: {result}")
