@@ -279,9 +279,14 @@ class ApplicationManager:
             namespace,
         )
 
+        if isinstance(app_label, str) and "=" in app_label:
+            label_selector = app_label
+        else:
+            label_selector = f"app={app_label}"
+
         # Delete deployments
         deployments = self.apps_v1.list_namespaced_deployment(
-            namespace, label_selector=f"app={app_label}"
+            namespace, label_selector=label_selector
         )
         for dep in deployments.items:
             logger.info("Deleting deployment %s", dep.metadata.name)
@@ -289,13 +294,13 @@ class ApplicationManager:
 
         # Delete services
         services = self.v1.list_namespaced_service(
-            namespace, label_selector=f"app={app_label}"
+            namespace, label_selector=label_selector
         )
         for svc in services.items:
             logger.info("Deleting service %s", svc.metadata.name)
             self.v1.delete_namespaced_service(svc.metadata.name, namespace)
 
-        return f"Deleted deployments and services for app={app_label}"
+        return f"Deleted deployments and services for {label_selector}"
 
     @handle_errors
     def update_microservice_image(

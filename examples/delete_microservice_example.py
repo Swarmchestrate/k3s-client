@@ -1,6 +1,6 @@
 from k3s_client.api.applications import ApplicationManager
 
-APP_LABEL = "app=my-app"
+APP_LABEL = "my-app"
 NAMESPACE = "default"
 
 
@@ -13,7 +13,7 @@ def delete_microservice_example(
     Delete a complete microservice deployment and service by label selector.
 
     Args:
-        app_label: Label selector for the application.
+        app_label: Application label value or full label selector (e.g. "my-app" or "app=my-app").
         namespace: Kubernetes namespace.
         kubeconfig_path: Optional path to a kubeconfig file.
 
