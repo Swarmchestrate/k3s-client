@@ -3,9 +3,9 @@ from ruamel.yaml import YAML
 from io import StringIO
 from pathlib import Path
 
-TOSCA_FILE = "examples/bookinfo.yaml"  # path relative to example folder
+TOSCA_FILE = "examples/busybox.yaml"  # path relative to example folder
 OUTPUT_FILE = "generated-manifests.yaml"
-IMAGE_PULL_SECRET = "my-registry-secret"
+IMAGE_PULL_SECRET = ""
 
 # Generate manifests from TOSCA
 manifests = get_kubernetes_manifest(

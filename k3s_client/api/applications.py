@@ -59,7 +59,12 @@ class ApplicationManager:
             output = self.kubectl.delete(manifest_file)
             del self.manifest_registry[manifest_file]
             return output
-        raise K3sClientError(f"Manifest {manifest_file} not found in registry")
+
+        logger.warning(
+            "Manifest %s not found in registry; deleting directly from manifest file",
+            manifest_file,
+        )
+        return self.kubectl.delete(manifest_file)
 
     # --------------------
     # ConfigMap management
@@ -157,6 +162,113 @@ class ApplicationManager:
         )
 
     @handle_errors
+    def create_microservice(
+        self,
+        deployment_name,
+        image,
+        container_name="app",
+        replicas=1,
+        namespace=None,
+        labels=None,
+        env=None,
+        ports=None,
+        node_selector=None,
+        service_type="ClusterIP",
+    ):
+        """Create a new microservice deployment and optional service."""
+        namespace = namespace or self.default_namespace
+        labels = labels or {"app": deployment_name}
+        logger.info(
+            "Creating microservice %s in namespace %s",
+            deployment_name,
+            namespace,
+        )
+
+        env_vars = [
+            client.V1EnvVar(name=name, value=str(value))
+            for name, value in (env or {}).items()
+        ]
+
+        container_ports = []
+        service_ports = []
+        for port in ports or []:
+            if isinstance(port, int):
+                port_context = {"port": port, "targetPort": port}
+            else:
+                port_context = port
+
+            service_port = int(port_context.get("port", 0))
+            target_port = int(port_context.get("targetPort", service_port))
+            protocol = str(port_context.get("protocol", "TCP")).upper()
+            node_port = port_context.get("nodePort")
+
+            container_ports.append(
+                client.V1ContainerPort(
+                    container_port=target_port,
+                    protocol=protocol,
+                )
+            )
+
+            service_port_obj = client.V1ServicePort(
+                name=f"port-{service_port}",
+                port=service_port,
+                target_port=target_port,
+                protocol=protocol,
+            )
+            if node_port is not None:
+                service_port_obj.node_port = int(node_port)
+            service_ports.append(service_port_obj)
+
+        container = client.V1Container(
+            name=container_name,
+            image=image,
+            ports=container_ports or None,
+            env=env_vars or None,
+        )
+
+        pod_spec = client.V1PodSpec(
+            containers=[container],
+            node_selector=node_selector or None,
+        )
+
+        template = client.V1PodTemplateSpec(
+            metadata=client.V1ObjectMeta(labels=labels),
+            spec=pod_spec,
+        )
+
+        deployment_spec = client.V1DeploymentSpec(
+            replicas=replicas,
+            selector=client.V1LabelSelector(match_labels=labels),
+            template=template,
+        )
+
+        deployment = client.V1Deployment(
+            metadata=client.V1ObjectMeta(name=deployment_name, labels=labels),
+            spec=deployment_spec,
+        )
+
+        self.apps_v1.create_namespaced_deployment(namespace=namespace, body=deployment)
+        logger.info("Deployment %s created in %s", deployment_name, namespace)
+
+        result = [f"Deployment {deployment_name} created in {namespace}"]
+
+        if service_ports:
+            service_spec = client.V1ServiceSpec(
+                type=service_type,
+                selector=labels,
+                ports=service_ports,
+            )
+            service = client.V1Service(
+                metadata=client.V1ObjectMeta(name=deployment_name, labels=labels),
+                spec=service_spec,
+            )
+            self.v1.create_namespaced_service(namespace=namespace, body=service)
+            logger.info("Service %s created in %s", deployment_name, namespace)
+            result.append(f"Service {deployment_name} created in {namespace}")
+
+        return "\n".join(result)
+
+    @handle_errors
     def delete_microservice(self, app_label, namespace=None):
         namespace = namespace or self.default_namespace
         logger.info(
@@ -165,23 +277,53 @@ class ApplicationManager:
             namespace,
         )
 
-        # Delete deployments
+        if isinstance(app_label, str) and "=" in app_label:
+            label_selector = app_label
+        else:
+            label_selector = f"app={app_label}"
+
+        deleted_deployments = 0
+        deleted_services = 0
+
+        # Delete deployments by label selector
         deployments = self.apps_v1.list_namespaced_deployment(
-            namespace, label_selector=f"app={app_label}"
+            namespace, label_selector=label_selector
         )
         for dep in deployments.items:
             logger.info("Deleting deployment %s", dep.metadata.name)
             self.apps_v1.delete_namespaced_deployment(dep.metadata.name, namespace)
+            deleted_deployments += 1
 
-        # Delete services
+        # If no deployment matched and app_label looks like a deployment name, try deleting by name
+        if deleted_deployments == 0 and "=" not in app_label:
+            try:
+                self.apps_v1.delete_namespaced_deployment(app_label, namespace)
+                logger.info("Deleting deployment by name %s", app_label)
+                deleted_deployments += 1
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+
+        # Delete services by label selector
         services = self.v1.list_namespaced_service(
-            namespace, label_selector=f"app={app_label}"
+            namespace, label_selector=label_selector
         )
         for svc in services.items:
             logger.info("Deleting service %s", svc.metadata.name)
             self.v1.delete_namespaced_service(svc.metadata.name, namespace)
+            deleted_services += 1
 
-        return f"Deleted deployments and services for app={app_label}"
+        # If no service matched and app_label looks like a service name, try deleting by name
+        if deleted_services == 0 and "=" not in app_label:
+            try:
+                self.v1.delete_namespaced_service(app_label, namespace)
+                logger.info("Deleting service by name %s", app_label)
+                deleted_services += 1
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+
+        return f"Deleted {deleted_deployments} deployments and {deleted_services} services for {app_label}"
 
     @handle_errors
     def update_microservice_image(

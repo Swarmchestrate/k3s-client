@@ -1,13 +1,22 @@
 from k3s_client.api.applications import ApplicationManager
 
+REGISTRY = "index.docker.io"
+USERNAME = "user"
+PASSWORD = "pass"
+EMAIL = "user@example.com"
+NAMESPACE = "default"
+SECRET_NAME = "my-registry-secret"
+KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml"
+
 
 def create_registry_secret_example(
-    registry: str = "index.docker.io",
-    username: str = "user",
-    password: str = "pass",
-    email: str = "user@example.com",
-    namespace: str = "default",
-    secret_name: str = "my-registry-secret",
+    registry: str = REGISTRY,
+    username: str = USERNAME,
+    password: str = PASSWORD,
+    email: str | None = EMAIL,
+    namespace: str = NAMESPACE,
+    secret_name: str = SECRET_NAME,
+    kubeconfig_path: str | None = None,
 ) -> str:
     """
     Create a registry secret for pulling private images.
@@ -16,14 +25,15 @@ def create_registry_secret_example(
         registry: Docker registry URL (e.g., "index.docker.io", "my-registry.com")
         username: Registry username
         password: Registry password
-        email: User email
+        email: Optional email address for the registry secret
         namespace: Kubernetes namespace
         secret_name: Name for the secret
+        kubeconfig_path: Optional path to a kubeconfig file.
 
     Returns:
         Success message from the API
     """
-    manager = ApplicationManager()
+    manager = ApplicationManager(kubeconfig_path=kubeconfig_path)
     result = manager.create_registry_secret(
         name=secret_name,
         registry=registry,
@@ -36,10 +46,13 @@ def create_registry_secret_example(
     return result
 
 
-# Example usage (can be imported and called from another script):
-# result = create_registry_secret_example(
-#     registry="my-registry.com",
-#     username="myuser",
-#     password="mypass",
-#     namespace="production"
-# )
+if __name__ == "__main__":
+    create_registry_secret_example(
+        registry=REGISTRY,
+        username=USERNAME,
+        password=PASSWORD,
+        email=EMAIL,
+        namespace=NAMESPACE,
+        secret_name=SECRET_NAME,
+        kubeconfig_path=KUBECONFIG_PATH,
+    )

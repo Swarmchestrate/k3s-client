@@ -42,6 +42,12 @@ spec:
       containers:
         - name: "{{ name }}-{{ version }}"
           image: "{{ image }}"
+          {% if command %}
+          command:
+            {% for c in command %}
+            - "{{ c }}"
+            {% endfor %}
+          {% endif %}
           {% if args %}
           args:
             {% for a in args %}
