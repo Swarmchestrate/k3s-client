@@ -59,7 +59,12 @@ class ApplicationManager:
             output = self.kubectl.delete(manifest_file)
             del self.manifest_registry[manifest_file]
             return output
-        raise K3sClientError(f"Manifest {manifest_file} not found in registry")
+
+        logger.warning(
+            "Manifest %s not found in registry; deleting directly from manifest file",
+            manifest_file,
+        )
+        return self.kubectl.delete(manifest_file)
 
     # --------------------
     # ConfigMap management
