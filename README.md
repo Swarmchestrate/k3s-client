@@ -90,7 +90,7 @@ The `examples/` directory contains complete runnable scripts:
 |------|-------------|
 | `registry_secret_example.py` | Managing Docker registry secrets |
 | `configmap_example.py` | Creating ConfigMaps from literals and files |
-| `manifest_example.py` | Generating Kubernetes manifests from TOSCA definitions |
+| `manifest_generator_example.py` | Generating Kubernetes manifests from TOSCA definitions |
 | `manifest_apply_example.py` | Applying a generated manifest to the cluster |
 | `manifest_delete_example.py` | Deleting resources defined in a manifest |
 | `deploy_microservice_example.py` | Create a new deployment and optional service |
