@@ -19,7 +19,7 @@ A lightweight Python client for managing microservices on Kubernetes k3s cluster
 ## Prerequisites
 
 - Python **3.12** or higher
-- A running **k3s server** with a valid kubeconfig (default: `~/.kube/config`)
+- A running **k3s server** with a valid kubeconfig (default: `/etc/rancher/k3s/k3s.yaml`)
 - `kubectl` installed
 
 ---
@@ -104,6 +104,14 @@ Run any example:
 
 ```bash
 python examples/scale_microservice_example.py
+```
+
+By default, examples use the k3s kubeconfig at `/etc/rancher/k3s/k3s.yaml`. You can also override this path in the script or via environment configuration when needed.
+
+Set the environment variable like this:
+
+```bash
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 ```
 
 ---
