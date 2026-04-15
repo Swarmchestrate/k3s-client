@@ -284,23 +284,50 @@ class ApplicationManager:
         else:
             label_selector = f"app={app_label}"
 
-        # Delete deployments
+        deleted_deployments = 0
+        deleted_services = 0
+
+        # Delete deployments by label selector
         deployments = self.apps_v1.list_namespaced_deployment(
             namespace, label_selector=label_selector
         )
         for dep in deployments.items:
             logger.info("Deleting deployment %s", dep.metadata.name)
             self.apps_v1.delete_namespaced_deployment(dep.metadata.name, namespace)
+            deleted_deployments += 1
 
-        # Delete services
+        # If no deployment matched and app_label looks like a deployment name, try deleting by name
+        if deleted_deployments == 0 and "=" not in app_label:
+            try:
+                self.apps_v1.delete_namespaced_deployment(app_label, namespace)
+                logger.info("Deleting deployment by name %s", app_label)
+                deleted_deployments += 1
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+
+        # Delete services by label selector
         services = self.v1.list_namespaced_service(
             namespace, label_selector=label_selector
         )
         for svc in services.items:
             logger.info("Deleting service %s", svc.metadata.name)
             self.v1.delete_namespaced_service(svc.metadata.name, namespace)
+            deleted_services += 1
 
-        return f"Deleted deployments and services for {label_selector}"
+        # If no service matched and app_label looks like a service name, try deleting by name
+        if deleted_services == 0 and "=" not in app_label:
+            try:
+                self.v1.delete_namespaced_service(app_label, namespace)
+                logger.info("Deleting service by name %s", app_label)
+                deleted_services += 1
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+
+        return (
+            f"Deleted {deleted_deployments} deployments and {deleted_services} services for {app_label}"
+        )
 
     @handle_errors
     def update_microservice_image(
