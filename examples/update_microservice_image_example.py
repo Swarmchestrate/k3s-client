@@ -11,6 +11,7 @@ def update_microservice_image_example(
     container_name: str = CONTAINER_NAME,
     new_image: str = NEW_IMAGE,
     namespace: str = NAMESPACE,
+    kubeconfig_path: str | None = None,
 ) -> str:
     """
     Update the container image of a microservice using a rolling update.
@@ -20,11 +21,12 @@ def update_microservice_image_example(
         container_name: Name of the container to update.
         new_image: New container image to deploy.
         namespace: Kubernetes namespace.
+        kubeconfig_path: Optional path to a kubeconfig file.
 
     Returns:
         The API response from the image update operation.
     """
-    manager = ApplicationManager()
+    manager = ApplicationManager(kubeconfig_path=kubeconfig_path)
     result = manager.update_microservice_image(
         deployment_name=deployment_name,
         container_name=container_name,

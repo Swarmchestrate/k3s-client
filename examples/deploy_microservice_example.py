@@ -23,6 +23,7 @@ def deploy_microservice_example(
     ports: list = PORTS,
     node_selector: dict = NODE_SELECTOR,
     service_type: str = SERVICE_TYPE,
+    kubeconfig_path: str | None = None,
 ) -> str:
     """
     Deploy a new microservice deployment and optional service.
@@ -38,11 +39,12 @@ def deploy_microservice_example(
         ports: List of service/container ports.
         node_selector: Node selector labels.
         service_type: Kubernetes service type.
+        kubeconfig_path: Optional path to a kubeconfig file.
 
     Returns:
         Deployment and service creation result.
     """
-    manager = ApplicationManager()
+    manager = ApplicationManager(kubeconfig_path=kubeconfig_path)
     result = manager.create_microservice(
         deployment_name=deployment_name,
         image=image,

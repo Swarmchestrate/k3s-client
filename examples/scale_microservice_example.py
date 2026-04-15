@@ -9,6 +9,7 @@ def scale_microservice_example(
     deployment_name: str = DEPLOYMENT_NAME,
     replicas: int = REPLICAS,
     namespace: str = NAMESPACE,
+    kubeconfig_path: str | None = None,
 ) -> str:
     """
     Scale a microservice up or down by changing replica count.
@@ -17,11 +18,12 @@ def scale_microservice_example(
         deployment_name: Name of the Kubernetes deployment.
         replicas: Desired number of replicas.
         namespace: Kubernetes namespace.
+        kubeconfig_path: Optional path to a kubeconfig file.
 
     Returns:
         The API response from the scaling operation.
     """
-    manager = ApplicationManager()
+    manager = ApplicationManager(kubeconfig_path=kubeconfig_path)
     result = manager.scale_microservice(
         deployment_name=deployment_name, replicas=replicas, namespace=namespace
     )
