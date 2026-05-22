@@ -1,0 +1,12 @@
+{
+  "name": "SwCh TOSCA Codespace",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bullseye",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python"
+      ]
+    }
+  },
+  "postCreateCommand": "set -e; curl -fsSL \"https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl\" -o /tmp/kubectl && sudo install -o root -g root -m 0755 /tmp/kubectl /usr/local/bin/kubectl && rm -f /tmp/kubectl && curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH=\"$HOME/.local/bin:$PATH\" && uv sync && wget https://github.com/Swarmchestrate/tosca/releases/download/v0.2.4/go-puccini_0.22.7-SNAPSHOT-3e85b40_linux_amd64.deb && (sudo dpkg -i go-puccini_0.22.7-SNAPSHOT-3e85b40_linux_amd64.deb || sudo apt --fix-broken install -y) && rm -f go-puccini_0.22.7-SNAPSHOT-3e85b40_linux_amd64.deb"
+}
