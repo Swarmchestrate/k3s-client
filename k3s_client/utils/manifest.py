@@ -135,9 +135,8 @@ def get_kubernetes_manifest(
 
         # Version/app/service precedence supports generic or namespaced labels.
         labels = props.get("labels", {}) or {}
-        version = (
-            _label_by_semantic_key(labels, "version")
-            or props.get("version", "v1")
+        version = _label_by_semantic_key(labels, "version") or props.get(
+            "version", "v1"
         )
         version = str(version)
         version_name = _name_token(version)
@@ -147,10 +146,7 @@ def get_kubernetes_manifest(
             or _label_by_semantic_key(labels, "service")
             or name.replace("_", "-")
         )
-        service_name = (
-            _label_by_semantic_key(labels, "service")
-            or app_name
-        )
+        service_name = _label_by_semantic_key(labels, "service") or app_name
 
         # Strip trailing "-<version>" from node name to avoid duplication
         # e.g. node "details_v1" → k3s_name "details-v1" → base "details"
@@ -192,7 +188,7 @@ def get_kubernetes_manifest(
         # Volumes — support both explicit k8s-style volume definitions and
         # TOSCA source/target entries.
         volume_mounts = []
-        for vm in (props.get("volume_mounts") or []):
+        for vm in props.get("volume_mounts") or []:
             if not isinstance(vm, dict):
                 continue
             mount_name = vm.get("name")
