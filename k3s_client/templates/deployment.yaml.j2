@@ -1,64 +1,67 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: "{{ name }}-{{ version }}"
+  name: {{ (name ~ '-' ~ version_name) | tojson }}
   labels:
-    app: "{{ labels.app | default(name) }}"
-    version: "{{ version }}"
-    service: "{{ labels.app | default(name) }}"
+    app: {{ app_label | tojson }}
+    version: {{ version | tojson }}
+    service: {{ service_label | tojson }}
 spec:
   replicas: {{ replicas }}
   selector:
     matchLabels:
-      app: "{{ labels.app | default(name) }}"
-      version: "{{ version }}"
-      service: "{{ labels.app | default(name) }}"
+      app: {{ app_label | tojson }}
+      version: {{ version | tojson }}
+      service: {{ service_label | tojson }}
   template:
     metadata:
       labels:
-        app: "{{ labels.app | default(name) }}"
-        version: "{{ version }}"
-        service: "{{ labels.app | default(name) }}"
+        app: {{ app_label | tojson }}
+        version: {{ version | tojson }}
+        service: {{ service_label | tojson }}
       {% if annotations %}
       annotations:
         {% for k, v in annotations.items() %}
-        {{ k }}: "{{ v }}"
+        {{ k }}: {{ v | tojson }}
         {% endfor %}
       {% endif %}
     spec:
       {% if service_account %}
-      serviceAccountName: "{{ service_account }}"
+      serviceAccountName: {{ service_account | tojson }}
       {% endif %}
       {% if image_pull_secret %}
       imagePullSecrets:
-        - name: "{{ image_pull_secret }}"
+        - name: {{ image_pull_secret | tojson }}
       {% endif %}
       {% if node_selector %}
       nodeSelector:
         {% for k, v in node_selector.items() %}
-        {{ k }}: "{{ v }}"
+        {{ k }}: {{ v | tojson }}
         {% endfor %}
       {% endif %}
+      {% if affinity %}
+      affinity: {{ affinity | tojson }}
+      {% endif %}
       containers:
-        - name: "{{ name }}-{{ version }}"
-          image: "{{ image }}"
+        - name: {{ (name ~ '-' ~ version_name) | tojson }}
+          image: {{ image | tojson }}
           {% if command %}
           command:
             {% for c in command %}
-            - "{{ c }}"
+            - {{ c | tojson }}
             {% endfor %}
           {% endif %}
           {% if args %}
           args:
             {% for a in args %}
-            - "{{ a }}"
+            - {{ a | tojson }}
             {% endfor %}
           {% endif %}
           {% if env_list %}
           env:
             {% for e in env_list %}
-            - name: "{{ e.name }}"
-              value: "{{ e.value }}"
+            - name: {{ e.name | tojson }}
+              value: {{ e.value | tojson }}
             {% endfor %}
           {% endif %}
           {% if container_ports %}
@@ -71,25 +74,34 @@ spec:
           {% if volume_mounts %}
           volumeMounts:
             {% for vm in volume_mounts %}
-            - name: "{{ vm.name }}"
-              mountPath: "{{ vm.mountPath }}"
+            - name: {{ vm.name | tojson }}
+              mountPath: {{ vm.mountPath | tojson }}
+              {% if vm.readOnly is defined and vm.readOnly %}
+              readOnly: true
+              {% endif %}
             {% endfor %}
           {% endif %}
       {% if volumes %}
       volumes:
         {% for v in volumes %}
-        - name: "{{ v.name }}"
+        - name: {{ v.name | tojson }}
           {% if v.emptyDir is defined %}
           emptyDir: {}
           {% elif v.configMap is defined %}
           configMap:
-            name: "{{ v.configMap.name }}"
+            name: {{ v.configMap.name | tojson }}
           {% elif v.secret is defined %}
           secret:
-            secretName: "{{ v.secret.secretName }}"
+            secretName: {{ v.secret.secretName | tojson }}
           {% elif v.persistentVolumeClaim is defined %}
           persistentVolumeClaim:
-            claimName: "{{ v.persistentVolumeClaim.claimName }}"
+            claimName: {{ v.persistentVolumeClaim.claimName | tojson }}
+          {% elif v.hostPath is defined %}
+          hostPath:
+            path: {{ v.hostPath.path | tojson }}
+            {% if v.hostPath.type is defined %}
+            type: {{ v.hostPath.type | tojson }}
+            {% endif %}
           {% endif %}
         {% endfor %}
       {% endif %}

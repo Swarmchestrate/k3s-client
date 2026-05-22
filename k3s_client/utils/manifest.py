@@ -19,6 +19,80 @@ jinja_env = Environment(
 jinja_env.filters["tojson"] = lambda value: json.dumps(value, ensure_ascii=False)
 
 
+def _volume_name_from_path(path: str, index: int) -> str:
+    base = re.sub(r"[^a-z0-9-]", "-", path.lower()).strip("-")
+    base = re.sub(r"-+", "-", base)
+    if not base:
+        base = f"vol-{index}"
+    if not base.startswith("vol-"):
+        base = f"vol-{base}"
+    return base[:63].rstrip("-")
+
+
+def _name_token(value: Any, fallback: str = "v1") -> str:
+    token = re.sub(r"[^a-z0-9-]", "-", str(value).lower()).strip("-")
+    token = re.sub(r"-+", "-", token)
+    return (token or fallback)[:63].rstrip("-")
+
+
+def _label_by_semantic_key(labels: Dict[str, Any], semantic_key: str) -> Optional[str]:
+    """Return a label value by semantic key, allowing namespaced keys.
+
+    Examples for semantic_key="version":
+    - version
+    - com.swarmchestrate.version
+    - swarmchestrate.eu/version
+    """
+    if semantic_key in labels and labels.get(semantic_key) is not None:
+        return str(labels.get(semantic_key))
+
+    pattern = re.compile(rf"(^|[./_-]){re.escape(semantic_key)}$")
+    for key, value in labels.items():
+        if value is None:
+            continue
+        if pattern.search(str(key)):
+            return str(value)
+    return None
+
+
+def _build_colocation_app_map(
+    node_templates: Dict[str, Dict[str, Any]], policies: List[Dict[str, Any]]
+) -> Dict[str, List[str]]:
+    """Map each microservice node name to app labels from its colocation groups."""
+    app_by_node: Dict[str, str] = {}
+    for node_name, node in node_templates.items():
+        if not str(node.get("type", "")).endswith("Microservice"):
+            continue
+        props = node.get("properties", {}) or {}
+        labels = props.get("labels", {}) or {}
+        app_by_node[node_name] = (
+            _label_by_semantic_key(labels, "app")
+            or _label_by_semantic_key(labels, "service")
+            or node_name.replace("_", "-")
+        )
+
+    colocated_apps_by_node: Dict[str, set[str]] = {}
+    for policy in policies or []:
+        if not isinstance(policy, dict):
+            continue
+        for _, data in policy.items():
+            if not isinstance(data, dict):
+                continue
+            ptype = str(data.get("type", ""))
+            if not ptype.endswith("Scheduling.Colocation"):
+                continue
+
+            targets = [t for t in (data.get("targets") or []) if t in app_by_node]
+            if len(targets) < 2:
+                continue
+
+            group_apps = sorted({app_by_node[t] for t in targets})
+            for target in targets:
+                colocated_apps_by_node.setdefault(target, set()).update(group_apps)
+
+    return {k: sorted(v) for k, v in colocated_apps_by_node.items()}
+
+
 def _render_yaml(template_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
     template = jinja_env.get_template(template_name)
     rendered = template.render(**context)
@@ -37,9 +111,11 @@ def get_kubernetes_manifest(
         raise ValueError("Provide either tosca_file or tosca_content")
 
     tosca = Sardou(content=tosca_content)
-    node_templates = (
-        tosca.raw._to_dict().get("service_template", {}).get("node_templates", {})
-    )
+    tosca_dict = tosca.raw._to_dict()
+    service_template = tosca_dict.get("service_template", {})
+    node_templates = service_template.get("node_templates", {})
+    policies = service_template.get("policies", []) or []
+    colocated_apps_by_node = _build_colocation_app_map(node_templates, policies)
 
     if not node_templates:
         raise ValueError("No node_templates found in TOSCA YAML")
@@ -57,10 +133,20 @@ def get_kubernetes_manifest(
         if not image:
             continue
 
-        # Version from labels is the source of truth
+        # Version/app/service precedence supports generic or namespaced labels.
         labels = props.get("labels", {}) or {}
-        version = labels.get("version") or props.get("version", "v1")
-        app_name = labels.get("app") or name.replace("_", "-")
+        version = _label_by_semantic_key(labels, "version") or props.get(
+            "version", "v1"
+        )
+        version = str(version)
+        version_name = _name_token(version)
+
+        app_name = (
+            _label_by_semantic_key(labels, "app")
+            or _label_by_semantic_key(labels, "service")
+            or name.replace("_", "-")
+        )
+        service_name = _label_by_semantic_key(labels, "service") or app_name
 
         # Strip trailing "-<version>" from node name to avoid duplication
         # e.g. node "details_v1" → k3s_name "details-v1" → base "details"
@@ -99,15 +185,50 @@ def get_kubernetes_manifest(
                 sp["nodePort"] = int(node_port)
             service_ports.append(sp)
 
-        # Volumes — normalise mount_path → mountPath, auto-fill emptyDir
-        volume_mounts = [
-            {
-                "name": vm["name"],
-                "mountPath": vm.get("mountPath") or vm.get("mount_path", ""),
-            }
-            for vm in (props.get("volume_mounts") or [])
+        # Volumes — support both explicit k8s-style volume definitions and
+        # TOSCA source/target entries.
+        volume_mounts = []
+        for vm in props.get("volume_mounts") or []:
+            if not isinstance(vm, dict):
+                continue
+            mount_name = vm.get("name")
+            if not mount_name:
+                continue
+            volume_mounts.append(
+                {
+                    "name": mount_name,
+                    "mountPath": vm.get("mountPath") or vm.get("mount_path", ""),
+                }
+            )
+
+        tosca_volumes = []
+        for idx, v in enumerate((props.get("volumes") or []), start=1):
+            if not isinstance(v, dict):
+                continue
+            source = v.get("source")
+            target = v.get("target")
+            if not source or not target:
+                continue
+
+            vol_name = _volume_name_from_path(str(source), idx)
+            tosca_volumes.append(
+                {
+                    "name": vol_name,
+                    "hostPath": {"path": str(source), "type": "DirectoryOrCreate"},
+                }
+            )
+            read_only = str(v.get("read_only", "")).lower() == "true"
+            mount = {"name": vol_name, "mountPath": str(target)}
+            if read_only:
+                mount["readOnly"] = True
+            volume_mounts.append(mount)
+
+        volumes = [
+            v
+            for v in (props.get("volumes") or [])
+            if isinstance(v, dict) and v.get("name")
         ]
-        volumes = list(props.get("volumes") or [])
+        volumes.extend(tosca_volumes)
         declared_vol_names = {v["name"] for v in volumes}
         for vm in volume_mounts:
             if vm["name"] not in declared_vol_names:
@@ -116,6 +237,7 @@ def get_kubernetes_manifest(
         deployment_context = {
             "name": k3s_name_base,
             "version": version,
+            "version_name": version_name,
             "replicas": replicas,
             "image": image,
             "command": command,
@@ -125,8 +247,35 @@ def get_kubernetes_manifest(
             "volume_mounts": volume_mounts,
             "volumes": volumes,
             "labels": labels,
+            "app_label": app_name,
+            "service_label": service_name,
             "annotations": props.get("annotations", {}),
             "node_selector": props.get("node_selector", {}),
+            "affinity": (
+                {
+                    "podAffinity": {
+                        "preferredDuringSchedulingIgnoredDuringExecution": [
+                            {
+                                "weight": 100,
+                                "podAffinityTerm": {
+                                    "labelSelector": {
+                                        "matchExpressions": [
+                                            {
+                                                "key": "app",
+                                                "operator": "In",
+                                                "values": colocated_apps_by_node[name],
+                                            }
+                                        ]
+                                    },
+                                    "topologyKey": "kubernetes.io/hostname",
+                                },
+                            }
+                        ]
+                    }
+                }
+                if name in colocated_apps_by_node
+                else None
+            ),
             "service_account": props.get("service_account"),
             "image_pull_secret": image_pull_secret,
         }
