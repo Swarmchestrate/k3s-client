@@ -19,6 +19,16 @@ jinja_env = Environment(
 jinja_env.filters["tojson"] = lambda value: json.dumps(value, ensure_ascii=False)
 
 
+def _volume_name_from_path(path: str, index: int) -> str:
+    base = re.sub(r"[^a-z0-9-]", "-", path.lower()).strip("-")
+    base = re.sub(r"-+", "-", base)
+    if not base:
+        base = f"vol-{index}"
+    if not base.startswith("vol-"):
+        base = f"vol-{base}"
+    return base[:63].rstrip("-")
+
+
 def _render_yaml(template_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
     template = jinja_env.get_template(template_name)
     rendered = template.render(**context)
@@ -99,15 +109,50 @@ def get_kubernetes_manifest(
                 sp["nodePort"] = int(node_port)
             service_ports.append(sp)
 
-        # Volumes — normalise mount_path → mountPath, auto-fill emptyDir
-        volume_mounts = [
-            {
-                "name": vm["name"],
-                "mountPath": vm.get("mountPath") or vm.get("mount_path", ""),
-            }
-            for vm in (props.get("volume_mounts") or [])
+        # Volumes — support both explicit k8s-style volume definitions and
+        # TOSCA source/target entries.
+        volume_mounts = []
+        for vm in (props.get("volume_mounts") or []):
+            if not isinstance(vm, dict):
+                continue
+            name = vm.get("name")
+            if not name:
+                continue
+            volume_mounts.append(
+                {
+                    "name": name,
+                    "mountPath": vm.get("mountPath") or vm.get("mount_path", ""),
+                }
+            )
+
+        tosca_volumes = []
+        for idx, v in enumerate((props.get("volumes") or []), start=1):
+            if not isinstance(v, dict):
+                continue
+            source = v.get("source")
+            target = v.get("target")
+            if not source or not target:
+                continue
+
+            vol_name = _volume_name_from_path(str(source), idx)
+            tosca_volumes.append(
+                {
+                    "name": vol_name,
+                    "hostPath": {"path": str(source), "type": "DirectoryOrCreate"},
+                }
+            )
+            read_only = str(v.get("read_only", "")).lower() == "true"
+            mount = {"name": vol_name, "mountPath": str(target)}
+            if read_only:
+                mount["readOnly"] = True
+            volume_mounts.append(mount)
+
+        volumes = [
+            v
+            for v in (props.get("volumes") or [])
+            if isinstance(v, dict) and v.get("name")
         ]
-        volumes = list(props.get("volumes") or [])
+        volumes.extend(tosca_volumes)
         declared_vol_names = {v["name"] for v in volumes}
         for vm in volume_mounts:
             if vm["name"] not in declared_vol_names:
