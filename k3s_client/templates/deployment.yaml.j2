@@ -39,6 +39,9 @@ spec:
         {{ k }}: {{ v | tojson }}
         {% endfor %}
       {% endif %}
+      {% if affinity %}
+      affinity: {{ affinity | tojson }}
+      {% endif %}
       containers:
         - name: {{ (name ~ '-' ~ version) | tojson }}
           image: {{ image | tojson }}
