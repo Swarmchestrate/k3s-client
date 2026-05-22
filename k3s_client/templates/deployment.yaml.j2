@@ -1,24 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ (name ~ '-' ~ version) | tojson }}
+  name: {{ (name ~ '-' ~ version_name) | tojson }}
   labels:
-    app: {{ (labels.app | default(name)) | tojson }}
+    app: {{ app_label | tojson }}
     version: {{ version | tojson }}
-    service: {{ (labels.app | default(name)) | tojson }}
+    service: {{ service_label | tojson }}
 spec:
   replicas: {{ replicas }}
   selector:
     matchLabels:
-      app: {{ (labels.app | default(name)) | tojson }}
+      app: {{ app_label | tojson }}
       version: {{ version | tojson }}
-      service: {{ (labels.app | default(name)) | tojson }}
+      service: {{ service_label | tojson }}
   template:
     metadata:
       labels:
-        app: {{ (labels.app | default(name)) | tojson }}
+        app: {{ app_label | tojson }}
         version: {{ version | tojson }}
-        service: {{ (labels.app | default(name)) | tojson }}
+        service: {{ service_label | tojson }}
       {% if annotations %}
       annotations:
         {% for k, v in annotations.items() %}
@@ -43,7 +43,7 @@ spec:
       affinity: {{ affinity | tojson }}
       {% endif %}
       containers:
-        - name: {{ (name ~ '-' ~ version) | tojson }}
+        - name: {{ (name ~ '-' ~ version_name) | tojson }}
           image: {{ image | tojson }}
           {% if command %}
           command:

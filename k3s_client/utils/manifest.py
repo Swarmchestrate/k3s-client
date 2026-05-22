@@ -29,6 +29,32 @@ def _volume_name_from_path(path: str, index: int) -> str:
     return base[:63].rstrip("-")
 
 
+def _name_token(value: Any, fallback: str = "v1") -> str:
+    token = re.sub(r"[^a-z0-9-]", "-", str(value).lower()).strip("-")
+    token = re.sub(r"-+", "-", token)
+    return (token or fallback)[:63].rstrip("-")
+
+
+def _label_by_semantic_key(labels: Dict[str, Any], semantic_key: str) -> Optional[str]:
+    """Return a label value by semantic key, allowing namespaced keys.
+
+    Examples for semantic_key="version":
+    - version
+    - com.swarmchestrate.version
+    - swarmchestrate.eu/version
+    """
+    if semantic_key in labels and labels.get(semantic_key) is not None:
+        return str(labels.get(semantic_key))
+
+    pattern = re.compile(rf"(^|[./_-]){re.escape(semantic_key)}$")
+    for key, value in labels.items():
+        if value is None:
+            continue
+        if pattern.search(str(key)):
+            return str(value)
+    return None
+
+
 def _build_colocation_app_map(
     node_templates: Dict[str, Dict[str, Any]], policies: List[Dict[str, Any]]
 ) -> Dict[str, List[str]]:
@@ -39,7 +65,11 @@ def _build_colocation_app_map(
             continue
         props = node.get("properties", {}) or {}
         labels = props.get("labels", {}) or {}
-        app_by_node[node_name] = labels.get("app") or node_name.replace("_", "-")
+        app_by_node[node_name] = (
+            _label_by_semantic_key(labels, "app")
+            or _label_by_semantic_key(labels, "service")
+            or node_name.replace("_", "-")
+        )
 
     colocated_apps_by_node: Dict[str, set[str]] = {}
     for policy in policies or []:
@@ -103,10 +133,24 @@ def get_kubernetes_manifest(
         if not image:
             continue
 
-        # Version from labels is the source of truth
+        # Version/app/service precedence supports generic or namespaced labels.
         labels = props.get("labels", {}) or {}
-        version = labels.get("version") or props.get("version", "v1")
-        app_name = labels.get("app") or name.replace("_", "-")
+        version = (
+            _label_by_semantic_key(labels, "version")
+            or props.get("version", "v1")
+        )
+        version = str(version)
+        version_name = _name_token(version)
+
+        app_name = (
+            _label_by_semantic_key(labels, "app")
+            or _label_by_semantic_key(labels, "service")
+            or name.replace("_", "-")
+        )
+        service_name = (
+            _label_by_semantic_key(labels, "service")
+            or app_name
+        )
 
         # Strip trailing "-<version>" from node name to avoid duplication
         # e.g. node "details_v1" → k3s_name "details-v1" → base "details"
@@ -197,6 +241,7 @@ def get_kubernetes_manifest(
         deployment_context = {
             "name": k3s_name_base,
             "version": version,
+            "version_name": version_name,
             "replicas": replicas,
             "image": image,
             "command": command,
@@ -206,6 +251,8 @@ def get_kubernetes_manifest(
             "volume_mounts": volume_mounts,
             "volumes": volumes,
             "labels": labels,
+            "app_label": app_name,
+            "service_label": service_name,
             "annotations": props.get("annotations", {}),
             "node_selector": props.get("node_selector", {}),
             "affinity": (
