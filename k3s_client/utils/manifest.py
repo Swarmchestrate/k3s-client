@@ -98,6 +98,7 @@ def _render_yaml(template_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
     rendered = template.render(**context)
     return yaml.load(StringIO(rendered))
 
+
 def _read_tosca_file_content(tosca_file: str) -> str:
     input_path = Path(tosca_file).expanduser()
 
@@ -115,9 +116,7 @@ def _read_tosca_file_content(tosca_file: str) -> str:
     if resolved_path is None:
         raise FileNotFoundError(f"TOSCA file not found: {tosca_file}")
     if resolved_path.is_dir():
-        raise ValueError(
-            f"Expected a TOSCA file path, got directory: {resolved_path}"
-        )
+        raise ValueError(f"Expected a TOSCA file path, got directory: {resolved_path}")
 
     try:
         return resolved_path.read_text(encoding="utf-8")
