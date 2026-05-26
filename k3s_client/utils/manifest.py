@@ -1,17 +1,33 @@
 import json
+import logging
 import re
 from pathlib import Path
 from io import StringIO
 from typing import Any, Dict, Optional, List
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from jinja2 import (
+    ChoiceLoader,
+    Environment,
+    FileSystemLoader,
+    PackageLoader,
+    StrictUndefined,
+    TemplateNotFound,
+)
 from ruamel.yaml import YAML
 from sardou import Sardou
 
 yaml = YAML()
+logger = logging.getLogger(__name__)
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
+_template_loaders = [FileSystemLoader(str(TEMPLATE_DIR))]
+try:
+    _template_loaders.append(PackageLoader("k3s_client", "templates"))
+except Exception:
+    # PackageLoader may fail in some source layouts; filesystem loader remains available.
+    pass
+
 jinja_env = Environment(
-    loader=FileSystemLoader(str(TEMPLATE_DIR)),
+    loader=ChoiceLoader(_template_loaders),
     undefined=StrictUndefined,
     trim_blocks=True,
     lstrip_blocks=True,
@@ -94,18 +110,37 @@ def _build_colocation_app_map(
 
 
 def _render_yaml(template_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
-    template = jinja_env.get_template(template_name)
+    try:
+        template = jinja_env.get_template(template_name)
+    except TemplateNotFound as exc:
+        logger.error(
+            "Template '%s' not found. Filesystem template dir: %s",
+            template_name,
+            TEMPLATE_DIR.resolve(),
+        )
+        raise FileNotFoundError(
+            f"Template '{template_name}' not found. Expected under {TEMPLATE_DIR.resolve()}"
+        ) from exc
     rendered = template.render(**context)
     return yaml.load(StringIO(rendered))
 
 
 def _read_tosca_file_content(tosca_file: str) -> str:
     input_path = Path(tosca_file).expanduser()
+    logger.debug(
+        "Reading TOSCA file",
+        extra={
+            "tosca_file": tosca_file,
+            "expanded_path": str(input_path),
+            "cwd": str(Path.cwd()),
+        },
+    )
 
     candidates = [input_path]
     if not input_path.is_absolute():
         candidates.append(Path.cwd() / input_path)
         candidates.append(Path(__file__).resolve().parents[2] / input_path)
+    logger.debug("TOSCA file candidates: %s", [str(c) for c in candidates])
 
     resolved_path: Optional[Path] = None
     for candidate in candidates:
@@ -114,13 +149,17 @@ def _read_tosca_file_content(tosca_file: str) -> str:
             break
 
     if resolved_path is None:
+        logger.error("TOSCA file not found: %s", tosca_file)
         raise FileNotFoundError(f"TOSCA file not found: {tosca_file}")
     if resolved_path.is_dir():
+        logger.error("TOSCA path points to directory: %s", resolved_path)
         raise ValueError(f"Expected a TOSCA file path, got directory: {resolved_path}")
 
     try:
+        logger.debug("Resolved TOSCA file path: %s", resolved_path)
         return resolved_path.read_text(encoding="utf-8")
     except PermissionError as exc:
+        logger.error("Permission denied while reading TOSCA file: %s", resolved_path)
         raise PermissionError(
             f"Permission denied while reading TOSCA file: {resolved_path}"
         ) from exc
@@ -132,17 +171,43 @@ def get_kubernetes_manifest(
     tosca_content: Optional[str] = None,
     image_pull_secret: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    logger.debug(
+        "Generating Kubernetes manifest",
+        extra={
+            "has_tosca_file": bool(tosca_file),
+            "has_tosca_content": bool(tosca_content),
+            "image_pull_secret_set": bool(image_pull_secret),
+        },
+    )
     if tosca_file:
         tosca_content = _read_tosca_file_content(tosca_file)
     elif not tosca_content:
         raise ValueError("Provide either tosca_file or tosca_content")
 
-    tosca = Sardou(content=tosca_content)
-    tosca_dict = tosca.raw._to_dict()
+    try:
+        tosca = Sardou(content=tosca_content)
+        tosca_dict = tosca.raw._to_dict()
+    except Exception as exc:
+        logger.exception("Failed to parse TOSCA content with Sardou")
+        raise ValueError(f"Invalid TOSCA content: {exc}") from exc
+
+    logger.debug("Sardou parse complete")
+    logger.debug("Parsed TOSCA top-level keys: %s", sorted(tosca_dict.keys()))
     service_template = tosca_dict.get("service_template", {})
+    logger.debug(
+        "Parsed service_template keys: %s",
+        sorted(service_template.keys()) if isinstance(service_template, dict) else [],
+    )
     node_templates = service_template.get("node_templates", {})
     policies = service_template.get("policies", []) or []
     colocated_apps_by_node = _build_colocation_app_map(node_templates, policies)
+    logger.debug(
+        "Parsed TOSCA service template",
+        extra={
+            "node_template_count": len(node_templates),
+            "policy_count": len(policies),
+        },
+    )
 
     if not node_templates:
         raise ValueError("No node_templates found in TOSCA YAML")
@@ -159,6 +224,8 @@ def get_kubernetes_manifest(
         image = props.get("image")
         if not image:
             continue
+
+        logger.debug("Rendering manifests for microservice node: %s", name)
 
         # Version/app/service precedence supports generic or namespaced labels.
         labels = props.get("labels", {}) or {}
@@ -324,5 +391,7 @@ def get_kubernetes_manifest(
             # Emit all services after all deployments
     for svc_context in pending_services.values():
         manifests.append(_render_yaml("service.yaml.j2", svc_context))
+
+    logger.info("Generated %d Kubernetes manifest objects", len(manifests))
 
     return manifests
