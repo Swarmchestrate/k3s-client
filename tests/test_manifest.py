@@ -43,3 +43,39 @@ def test_read_tosca_file_content_falls_back_to_repo_relative(tmp_path, monkeypat
     content = manifest_utils._read_tosca_file_content("examples/sample.yaml")
 
     assert "tosca_definitions_version" in content
+
+
+def test_get_kubernetes_manifest_parses_yaml_content():
+    tosca_content = """
+service_template:
+  node_templates:
+    web:
+      type: tosca.nodes.Swarm.Microservice
+      properties:
+        image: nginx:latest
+"""
+
+    manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    assert manifests
+    assert any(doc.get("kind") == "Deployment" for doc in manifests)
+
+
+def test_get_kubernetes_manifest_accepts_top_level_node_templates():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+"""
+
+    manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    assert manifests
+    assert any(doc.get("kind") == "Deployment" for doc in manifests)
+
+
+def test_get_kubernetes_manifest_raises_for_invalid_yaml():
+    with pytest.raises(ValueError, match="Invalid TOSCA content"):
+        manifest_utils.get_kubernetes_manifest(tosca_content="service_template: [")

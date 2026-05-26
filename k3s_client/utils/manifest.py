@@ -14,7 +14,6 @@ from jinja2 import (
     TemplateNotFound,
 )
 from ruamel.yaml import YAML
-from sardou import Sardou
 
 yaml = YAML()
 logger = logging.getLogger(__name__)
@@ -185,15 +184,18 @@ def get_kubernetes_manifest(
         raise ValueError("Provide either tosca_file or tosca_content")
 
     try:
-        tosca = Sardou(content=tosca_content)
-        tosca_dict = tosca.raw._to_dict()
+        tosca_dict = yaml.load(StringIO(tosca_content))
+        if not isinstance(tosca_dict, dict):
+            raise ValueError("TOSCA content must parse into a mapping")
     except Exception as exc:
-        logger.exception("Failed to parse TOSCA content with Sardou")
+        logger.exception("Failed to parse TOSCA YAML content")
         raise ValueError(f"Invalid TOSCA content: {exc}") from exc
 
-    logger.debug("Sardou parse complete")
+    logger.debug("YAML parse complete")
     logger.debug("Parsed TOSCA top-level keys: %s", sorted(tosca_dict.keys()))
     service_template = tosca_dict.get("service_template", {})
+    if not service_template and "node_templates" in tosca_dict:
+        service_template = tosca_dict
     logger.debug(
         "Parsed service_template keys: %s",
         sorted(service_template.keys()) if isinstance(service_template, dict) else [],
