@@ -98,6 +98,34 @@ def _render_yaml(template_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
     rendered = template.render(**context)
     return yaml.load(StringIO(rendered))
 
+def _read_tosca_file_content(tosca_file: str) -> str:
+    input_path = Path(tosca_file).expanduser()
+
+    candidates = [input_path]
+    if not input_path.is_absolute():
+        candidates.append(Path.cwd() / input_path)
+        candidates.append(Path(__file__).resolve().parents[2] / input_path)
+
+    resolved_path: Optional[Path] = None
+    for candidate in candidates:
+        if candidate.exists():
+            resolved_path = candidate
+            break
+
+    if resolved_path is None:
+        raise FileNotFoundError(f"TOSCA file not found: {tosca_file}")
+    if resolved_path.is_dir():
+        raise ValueError(
+            f"Expected a TOSCA file path, got directory: {resolved_path}"
+        )
+
+    try:
+        return resolved_path.read_text(encoding="utf-8")
+    except PermissionError as exc:
+        raise PermissionError(
+            f"Permission denied while reading TOSCA file: {resolved_path}"
+        ) from exc
+
 
 def get_kubernetes_manifest(
     *,
@@ -106,7 +134,7 @@ def get_kubernetes_manifest(
     image_pull_secret: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     if tosca_file:
-        tosca_content = Path(tosca_file).read_text(encoding="utf-8")
+        tosca_content = _read_tosca_file_content(tosca_file)
     elif not tosca_content:
         raise ValueError("Provide either tosca_file or tosca_content")
 
