@@ -28,3 +28,6 @@ pythonpath = "."
 where = ["."]
 include = ["k3s_client*"]
 
+[tool.setuptools.package-data]
+k3s_client = ["templates/*.j2"]
+

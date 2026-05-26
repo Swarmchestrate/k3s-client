@@ -5,15 +5,29 @@ from pathlib import Path
 from io import StringIO
 from typing import Any, Dict, Optional, List
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from jinja2 import (
+    ChoiceLoader,
+    Environment,
+    FileSystemLoader,
+    PackageLoader,
+    StrictUndefined,
+    TemplateNotFound,
+)
 from ruamel.yaml import YAML
 from sardou import Sardou
 
 yaml = YAML()
 logger = logging.getLogger(__name__)
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
+_template_loaders = [FileSystemLoader(str(TEMPLATE_DIR))]
+try:
+    _template_loaders.append(PackageLoader("k3s_client", "templates"))
+except Exception:
+    # PackageLoader may fail in some source layouts; filesystem loader remains available.
+    pass
+
 jinja_env = Environment(
-    loader=FileSystemLoader(str(TEMPLATE_DIR)),
+    loader=ChoiceLoader(_template_loaders),
     undefined=StrictUndefined,
     trim_blocks=True,
     lstrip_blocks=True,
@@ -96,7 +110,17 @@ def _build_colocation_app_map(
 
 
 def _render_yaml(template_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
-    template = jinja_env.get_template(template_name)
+    try:
+        template = jinja_env.get_template(template_name)
+    except TemplateNotFound as exc:
+        logger.error(
+            "Template '%s' not found. Filesystem template dir: %s",
+            template_name,
+            TEMPLATE_DIR.resolve(),
+        )
+        raise FileNotFoundError(
+            f"Template '{template_name}' not found. Expected under {TEMPLATE_DIR.resolve()}"
+        ) from exc
     rendered = template.render(**context)
     return yaml.load(StringIO(rendered))
 
