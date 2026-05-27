@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -55,7 +56,9 @@ service_template:
         image: nginx:latest
 """
 
-    manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
 
     assert manifests
     assert any(doc.get("kind") == "Deployment" for doc in manifests)
@@ -70,7 +73,9 @@ node_templates:
       image: nginx:latest
 """
 
-    manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
 
     assert manifests
     assert any(doc.get("kind") == "Deployment" for doc in manifests)
