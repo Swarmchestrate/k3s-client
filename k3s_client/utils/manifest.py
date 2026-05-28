@@ -14,6 +14,7 @@ from jinja2 import (
     TemplateNotFound,
 )
 from ruamel.yaml import YAML
+from sardou import Sardou
 
 yaml = YAML()
 logger = logging.getLogger(__name__)
@@ -68,44 +69,6 @@ def _label_by_semantic_key(labels: Dict[str, Any], semantic_key: str) -> Optiona
         if pattern.search(str(key)):
             return str(value)
     return None
-
-
-def _build_colocation_app_map(
-    node_templates: Dict[str, Dict[str, Any]], policies: List[Dict[str, Any]]
-) -> Dict[str, List[str]]:
-    """Map each microservice node name to app labels from its colocation groups."""
-    app_by_node: Dict[str, str] = {}
-    for node_name, node in node_templates.items():
-        if not str(node.get("type", "")).endswith("Microservice"):
-            continue
-        props = node.get("properties", {}) or {}
-        labels = props.get("labels", {}) or {}
-        app_by_node[node_name] = (
-            _label_by_semantic_key(labels, "app")
-            or _label_by_semantic_key(labels, "service")
-            or node_name.replace("_", "-")
-        )
-
-    colocated_apps_by_node: Dict[str, set[str]] = {}
-    for policy in policies or []:
-        if not isinstance(policy, dict):
-            continue
-        for _, data in policy.items():
-            if not isinstance(data, dict):
-                continue
-            ptype = str(data.get("type", ""))
-            if not ptype.endswith("Scheduling.Colocation"):
-                continue
-
-            targets = [t for t in (data.get("targets") or []) if t in app_by_node]
-            if len(targets) < 2:
-                continue
-
-            group_apps = sorted({app_by_node[t] for t in targets})
-            for target in targets:
-                colocated_apps_by_node.setdefault(target, set()).update(group_apps)
-
-    return {k: sorted(v) for k, v in colocated_apps_by_node.items()}
 
 
 def _render_yaml(template_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -201,14 +164,10 @@ def get_kubernetes_manifest(
         sorted(service_template.keys()) if isinstance(service_template, dict) else [],
     )
     node_templates = service_template.get("node_templates", {})
-    policies = service_template.get("policies", []) or []
-    colocated_apps_by_node = _build_colocation_app_map(node_templates, policies)
+    affinity_map = Sardou(content=tosca_content).get_affinity()
     logger.debug(
         "Parsed TOSCA service template",
-        extra={
-            "node_template_count": len(node_templates),
-            "policy_count": len(policies),
-        },
+        extra={"node_template_count": len(node_templates)},
     )
 
     if not node_templates:
@@ -348,29 +307,7 @@ def get_kubernetes_manifest(
             "annotations": props.get("annotations", {}),
             "node_selector": props.get("node_selector", {}),
             "affinity": (
-                {
-                    "podAffinity": {
-                        "preferredDuringSchedulingIgnoredDuringExecution": [
-                            {
-                                "weight": 100,
-                                "podAffinityTerm": {
-                                    "labelSelector": {
-                                        "matchExpressions": [
-                                            {
-                                                "key": "app",
-                                                "operator": "In",
-                                                "values": colocated_apps_by_node[name],
-                                            }
-                                        ]
-                                    },
-                                    "topologyKey": "kubernetes.io/hostname",
-                                },
-                            }
-                        ]
-                    }
-                }
-                if name in colocated_apps_by_node
-                else None
+                {"nodeAffinity": affinity_map[name]} if name in affinity_map else None
             ),
             "service_account": props.get("service_account"),
             "image_pull_secret": image_pull_secret,
