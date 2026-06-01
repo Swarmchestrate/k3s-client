@@ -84,3 +84,135 @@ node_templates:
 def test_get_kubernetes_manifest_raises_for_invalid_yaml():
     with pytest.raises(ValueError, match="Invalid TOSCA content"):
         manifest_utils.get_kubernetes_manifest(tosca_content="service_template: [")
+
+
+def _deployment(manifests):
+    return next(d for d in manifests if d.get("kind") == "Deployment")
+
+
+def _pod_spec(deployment):
+    return deployment["spec"]["template"]["spec"]
+
+
+def test_parse_file_mode():
+    assert manifest_utils._parse_file_mode("0444") == 0o444 == 292
+    assert manifest_utils._parse_file_mode("644") == 0o644
+    assert manifest_utils._parse_file_mode(None) is None
+    assert manifest_utils._parse_file_mode("not-a-mode") is None
+
+
+def test_volume_source_and_target_becomes_hostpath():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      volumes:
+      - source: /opt/data
+        target: /opt/data
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    spec = _pod_spec(_deployment(manifests))
+    vol = next(v for v in spec["volumes"] if "hostPath" in v)
+    assert vol["hostPath"]["path"] == "/opt/data"
+    mount = next(
+        m for m in spec["containers"][0]["volumeMounts"] if m["name"] == vol["name"]
+    )
+    assert mount["mountPath"] == "/opt/data"
+
+
+def test_volume_target_only_becomes_emptydir():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      volumes:
+      - target: /tmp
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    spec = _pod_spec(_deployment(manifests))
+    vol = next(v for v in spec["volumes"] if "emptyDir" in v)
+    mount = next(
+        m for m in spec["containers"][0]["volumeMounts"] if m["name"] == vol["name"]
+    )
+    assert mount["mountPath"] == "/tmp"
+
+
+def test_attached_file_becomes_configmap_with_subpath_mount():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+    requirements:
+    - volume:
+        node: banner_file
+        relationship:
+          properties:
+            mount_path: /etc/bookinfo/banner.txt
+  banner_file:
+    type: tosca.nodes.Swarm.File
+    properties:
+      content: |
+        Welcome to Bookinfo.
+      mode: "0444"
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    configmap = next(d for d in manifests if d.get("kind") == "ConfigMap")
+    assert configmap["data"]["banner.txt"] == "Welcome to Bookinfo.\n"
+
+    spec = _pod_spec(_deployment(manifests))
+    vol = next(v for v in spec["volumes"] if "configMap" in v)
+    assert vol["configMap"]["name"] == configmap["metadata"]["name"]
+    assert vol["configMap"]["defaultMode"] == 0o444
+    assert vol["configMap"]["items"][0]["mode"] == 0o444
+
+    mount = next(
+        m for m in spec["containers"][0]["volumeMounts"] if m["name"] == vol["name"]
+    )
+    assert mount["mountPath"] == "/etc/bookinfo/banner.txt"
+    assert mount["subPath"] == "banner.txt"
+
+
+def test_translation_is_deterministic():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      volumes:
+      - target: /tmp
+      - source: /opt/data
+        target: /opt/data
+    requirements:
+    - volume:
+        node: banner_file
+        relationship:
+          properties:
+            mount_path: /etc/banner.txt
+  banner_file:
+    type: tosca.nodes.Swarm.File
+    properties:
+      content: hello
+      mode: "0444"
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        first = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+        second = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    assert first == second
