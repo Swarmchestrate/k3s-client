@@ -156,8 +156,8 @@ node_templates:
     properties:
       image: nginx:latest
       volumes:
-      - source: /home/gunjan/classification-conf/configuration.ini
-        target: /app/configuration.ini
+      - source: /test/source/configuration.ini
+        target: /test/target/configuration.ini
 """
     with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
         mock_sardou.return_value.get_affinity.return_value = {}
@@ -165,14 +165,12 @@ node_templates:
 
     spec = _pod_spec(_deployment(manifests))
     vol = next(v for v in spec["volumes"] if "hostPath" in v)
-    assert (
-        vol["hostPath"]["path"] == "/home/gunjan/classification-conf/configuration.ini"
-    )
+    assert vol["hostPath"]["path"] == "/test/source/configuration.ini"
     assert vol["hostPath"]["type"] == "FileOrCreate"
     mount = next(
         m for m in spec["containers"][0]["volumeMounts"] if m["name"] == vol["name"]
     )
-    assert mount["mountPath"] == "/app/configuration.ini"
+    assert mount["mountPath"] == "/test/target/configuration.ini"
 
 
 def test_volume_source_target_respects_explicit_host_path_type():
@@ -194,6 +192,31 @@ node_templates:
     spec = _pod_spec(_deployment(manifests))
     vol = next(v for v in spec["volumes"] if "hostPath" in v)
     assert vol["hostPath"]["type"] == "Directory"
+
+
+def test_volume_source_target_can_be_read_only():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      volumes:
+      - source: ./test/config
+        target: /test/config
+        read_only: "true"
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    spec = _pod_spec(_deployment(manifests))
+    vol = next(v for v in spec["volumes"] if "hostPath" in v)
+    mount = next(
+        m for m in spec["containers"][0]["volumeMounts"] if m["name"] == vol["name"]
+    )
+    assert mount["mountPath"] == "/test/config"
+    assert mount["readOnly"] is True
 
 
 def test_attached_file_becomes_configmap_with_subpath_mount():
