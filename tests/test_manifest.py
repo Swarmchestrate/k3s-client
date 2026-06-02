@@ -119,6 +119,7 @@ node_templates:
     spec = _pod_spec(_deployment(manifests))
     vol = next(v for v in spec["volumes"] if "hostPath" in v)
     assert vol["hostPath"]["path"] == "/opt/data"
+    assert vol["hostPath"]["type"] == "DirectoryOrCreate"
     mount = next(
         m for m in spec["containers"][0]["volumeMounts"] if m["name"] == vol["name"]
     )
