@@ -76,6 +76,9 @@ spec:
             {% for vm in volume_mounts %}
             - name: {{ vm.name | tojson }}
               mountPath: {{ vm.mountPath | tojson }}
+              {% if vm.subPath is defined and vm.subPath %}
+              subPath: {{ vm.subPath | tojson }}
+              {% endif %}
               {% if vm.readOnly is defined and vm.readOnly %}
               readOnly: true
               {% endif %}
@@ -90,6 +93,19 @@ spec:
           {% elif v.configMap is defined %}
           configMap:
             name: {{ v.configMap.name | tojson }}
+            {% if v.configMap.defaultMode is defined and v.configMap.defaultMode %}
+            defaultMode: {{ v.configMap.defaultMode }}
+            {% endif %}
+            {% if v.configMap['items'] %}
+            items:
+              {% for it in v.configMap['items'] %}
+              - key: {{ it.key | tojson }}
+                path: {{ it.path | tojson }}
+                {% if it.mode is defined and it.mode %}
+                mode: {{ it.mode }}
+                {% endif %}
+              {% endfor %}
+            {% endif %}
           {% elif v.secret is defined %}
           secret:
             secretName: {{ v.secret.secretName | tojson }}

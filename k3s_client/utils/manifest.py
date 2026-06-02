@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from io import StringIO
 from typing import Any, Dict, Optional, List
 
@@ -49,6 +49,50 @@ def _name_token(value: Any, fallback: str = "v1") -> str:
     token = re.sub(r"[^a-z0-9-]", "-", str(value).lower()).strip("-")
     token = re.sub(r"-+", "-", token)
     return (token or fallback)[:63].rstrip("-")
+
+
+def _parse_file_mode(mode: Any) -> Optional[int]:
+    """Parse a TOSCA File.mode (e.g. "0444") into a Kubernetes integer mode.
+
+    Kubernetes expects file modes as base-10 integers representing the octal
+    permission bits (e.g. 0444 -> 292). Modes are interpreted as octal first to
+    match the conventional "0444" notation, falling back to decimal.
+    """
+    if mode is None:
+        return None
+    text = str(mode).strip()
+    if not text:
+        return None
+    try:
+        return int(text, 8)
+    except ValueError:
+        try:
+            return int(text, 10)
+        except ValueError:
+            logger.warning("Ignoring unparseable File.mode value: %r", mode)
+            return None
+
+
+def _iter_volume_requirements(node: Dict[str, Any]):
+    """Yield (target_node, mount_path) for each AttachesTo 'volume' requirement.
+
+    Microservices attach File/Volume node templates through a requirement named
+    'volume' whose relationship carries the desired container path in the
+    'mount_path' property.
+    """
+    for req in node.get("requirements", []) or []:
+        if not isinstance(req, dict):
+            continue
+        for req_name, req_body in req.items():
+            if req_name != "volume" or not isinstance(req_body, dict):
+                continue
+            target_node = req_body.get("node")
+            mount_path = None
+            relationship = req_body.get("relationship")
+            if isinstance(relationship, dict):
+                rel_props = relationship.get("properties") or {}
+                mount_path = rel_props.get("mount_path")
+            yield target_node, mount_path
 
 
 def _label_by_semantic_key(labels: Dict[str, Any], semantic_key: str) -> Optional[str]:
@@ -176,6 +220,14 @@ def get_kubernetes_manifest(
     manifests: List[Dict[str, Any]] = []
     pending_services: Dict[str, Dict[str, Any]] = {}
 
+    # File node templates (derived from Volume) are mounted into the workloads
+    # that attach them via a 'volume' requirement.
+    file_nodes: Dict[str, Dict[str, Any]] = {
+        node_name: node
+        for node_name, node in node_templates.items()
+        if str(node.get("type", "")).endswith("File")
+    }
+
     for name, node in node_templates.items():
         node_type = node.get("type", "")
         if not node_type.endswith("Microservice"):
@@ -262,17 +314,26 @@ def get_kubernetes_manifest(
                 continue
             source = v.get("source")
             target = v.get("target")
-            if not source or not target:
+            if not target:
+                # target is the required container path; without it there is
+                # nothing to mount.
                 continue
 
-            vol_name = _volume_name_from_path(str(source), idx)
-            tosca_volumes.append(
-                {
-                    "name": vol_name,
-                    "hostPath": {"path": str(source), "type": "DirectoryOrCreate"},
-                }
-            )
             read_only = str(v.get("read_only", "")).lower() == "true"
+            if source:
+                # source + target -> bind-mount a host directory.
+                vol_name = _volume_name_from_path(str(source), idx)
+                tosca_volumes.append(
+                    {
+                        "name": vol_name,
+                        "hostPath": {"path": str(source), "type": "DirectoryOrCreate"},
+                    }
+                )
+            else:
+                # target only -> ephemeral scratch space.
+                vol_name = _volume_name_from_path(str(target), idx)
+                tosca_volumes.append({"name": vol_name, "emptyDir": {}})
+
             mount = {"name": vol_name, "mountPath": str(target)}
             if read_only:
                 mount["readOnly"] = True
@@ -284,6 +345,58 @@ def get_kubernetes_manifest(
             if isinstance(v, dict) and v.get("name")
         ]
         volumes.extend(tosca_volumes)
+
+        # Attached File node templates -> ConfigMap-backed file mounts.
+        for target_node, mount_path in _iter_volume_requirements(node):
+            file_node = file_nodes.get(target_node) if target_node else None
+            if file_node is None or not mount_path:
+                continue
+            file_props = file_node.get("properties", {}) or {}
+            content = file_props.get("content")
+            if content is None:
+                logger.warning(
+                    "File node '%s' has no content; skipping mount", target_node
+                )
+                continue
+
+            mount_path = str(mount_path)
+            mode_int = _parse_file_mode(file_props.get("mode"))
+            # A path that does not end in "/" is treated as a concrete file, so
+            # the file is placed exactly there via subPath.
+            is_file_path = not mount_path.endswith("/")
+            data_key = (
+                PurePosixPath(mount_path).name
+                if is_file_path
+                else _name_token(target_node, "file")
+            )
+
+            cm_name = _name_token(f"{k3s_name}-{target_node}")
+            cm_vol_name = _name_token(f"cfg-{target_node}")
+            manifests.append(
+                _render_yaml(
+                    "configmap.yaml.j2",
+                    {
+                        "name": cm_name,
+                        "app_label": app_name,
+                        "data_key": data_key,
+                        "content": content,
+                    },
+                )
+            )
+
+            config_map: Dict[str, Any] = {"name": cm_name}
+            item: Dict[str, Any] = {"key": data_key, "path": data_key}
+            if mode_int is not None:
+                config_map["defaultMode"] = mode_int
+                item["mode"] = mode_int
+            config_map["items"] = [item]
+            volumes.append({"name": cm_vol_name, "configMap": config_map})
+
+            mount = {"name": cm_vol_name, "mountPath": mount_path, "readOnly": True}
+            if is_file_path:
+                mount["subPath"] = data_key
+            volume_mounts.append(mount)
+
         declared_vol_names = {v["name"] for v in volumes}
         for vm in volume_mounts:
             if vm["name"] not in declared_vol_names:

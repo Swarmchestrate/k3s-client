@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ name | tojson }}
+  labels:
+    app: {{ app_label | tojson }}
+data:
+  {{ data_key | tojson }}: {{ content | tojson }}
