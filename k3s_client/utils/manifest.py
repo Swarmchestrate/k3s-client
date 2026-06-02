@@ -45,6 +45,34 @@ def _volume_name_from_path(path: str, index: int) -> str:
     return base[:63].rstrip("-")
 
 
+def _infer_host_path_type(source: str, target: str, volume: Dict[str, Any]) -> str:
+    """Infer Kubernetes hostPath.type for source/target volume entries.
+
+    Rules:
+    - explicit type override wins (host_path_type/hostPathType/type)
+    - source or target ending with "/" implies a directory
+    - otherwise, if either path has a filename suffix (e.g. .ini), treat as file
+    - fallback is directory for backward compatibility
+    """
+    explicit_type = (
+        volume.get("host_path_type")
+        or volume.get("hostPathType")
+        or volume.get("type")
+    )
+    if explicit_type:
+        return str(explicit_type)
+
+    if source.endswith("/") or target.endswith("/"):
+        return "DirectoryOrCreate"
+
+    source_suffix = PurePosixPath(source).suffix
+    target_suffix = PurePosixPath(target).suffix
+    if source_suffix or target_suffix:
+        return "FileOrCreate"
+
+    return "DirectoryOrCreate"
+
+
 def _name_token(value: Any, fallback: str = "v1") -> str:
     token = re.sub(r"[^a-z0-9-]", "-", str(value).lower()).strip("-")
     token = re.sub(r"-+", "-", token)
@@ -321,12 +349,13 @@ def get_kubernetes_manifest(
 
             read_only = str(v.get("read_only", "")).lower() == "true"
             if source:
-                # source + target -> bind-mount a host directory.
+                # source + target -> hostPath bind mount.
                 vol_name = _volume_name_from_path(str(source), idx)
+                host_path_type = _infer_host_path_type(str(source), str(target), v)
                 tosca_volumes.append(
                     {
                         "name": vol_name,
-                        "hostPath": {"path": str(source), "type": "DirectoryOrCreate"},
+                        "hostPath": {"path": str(source), "type": host_path_type},
                     }
                 )
             else:

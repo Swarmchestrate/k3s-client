@@ -147,6 +147,52 @@ node_templates:
     assert mount["mountPath"] == "/tmp"
 
 
+def test_volume_file_source_and_target_becomes_file_or_create_hostpath():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      volumes:
+      - source: /home/gunjan/classification-conf/configuration.ini
+        target: /app/configuration.ini
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    spec = _pod_spec(_deployment(manifests))
+    vol = next(v for v in spec["volumes"] if "hostPath" in v)
+    assert vol["hostPath"]["path"] == "/home/gunjan/classification-conf/configuration.ini"
+    assert vol["hostPath"]["type"] == "FileOrCreate"
+    mount = next(
+        m for m in spec["containers"][0]["volumeMounts"] if m["name"] == vol["name"]
+    )
+    assert mount["mountPath"] == "/app/configuration.ini"
+
+
+def test_volume_source_target_respects_explicit_host_path_type():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      volumes:
+      - source: /opt/custom
+        target: /app/custom
+        host_path_type: Directory
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    spec = _pod_spec(_deployment(manifests))
+    vol = next(v for v in spec["volumes"] if "hostPath" in v)
+    assert vol["hostPath"]["type"] == "Directory"
+
+
 def test_attached_file_becomes_configmap_with_subpath_mount():
     tosca_content = """
 node_templates:
