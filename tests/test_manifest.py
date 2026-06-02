@@ -165,7 +165,9 @@ node_templates:
 
     spec = _pod_spec(_deployment(manifests))
     vol = next(v for v in spec["volumes"] if "hostPath" in v)
-    assert vol["hostPath"]["path"] == "/home/gunjan/classification-conf/configuration.ini"
+    assert (
+        vol["hostPath"]["path"] == "/home/gunjan/classification-conf/configuration.ini"
+    )
     assert vol["hostPath"]["type"] == "FileOrCreate"
     mount = next(
         m for m in spec["containers"][0]["volumeMounts"] if m["name"] == vol["name"]

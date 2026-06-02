@@ -55,9 +55,7 @@ def _infer_host_path_type(source: str, target: str, volume: Dict[str, Any]) -> s
     - fallback is directory for backward compatibility
     """
     explicit_type = (
-        volume.get("host_path_type")
-        or volume.get("hostPathType")
-        or volume.get("type")
+        volume.get("host_path_type") or volume.get("hostPathType") or volume.get("type")
     )
     if explicit_type:
         return str(explicit_type)
