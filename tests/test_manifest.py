@@ -196,6 +196,31 @@ node_templates:
     assert vol["hostPath"]["type"] == "Directory"
 
 
+def test_volume_source_target_can_be_read_only():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      volumes:
+      - source: ./nas/config
+        target: /app/config
+        read_only: "true"
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    spec = _pod_spec(_deployment(manifests))
+    vol = next(v for v in spec["volumes"] if "hostPath" in v)
+    mount = next(
+        m for m in spec["containers"][0]["volumeMounts"] if m["name"] == vol["name"]
+    )
+    assert mount["mountPath"] == "/app/config"
+    assert mount["readOnly"] is True
+
+
 def test_attached_file_becomes_configmap_with_subpath_mount():
     tosca_content = """
 node_templates:
