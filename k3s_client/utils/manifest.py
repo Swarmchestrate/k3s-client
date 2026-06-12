@@ -114,7 +114,9 @@ def _parse_bool(value: Any, default: bool) -> bool:
     if text in {"false", "0", "no", "n", "off"}:
         return False
 
-    logger.warning("Ignoring unparseable boolean value %r; using default=%s", value, default)
+    logger.warning(
+        "Ignoring unparseable boolean value %r; using default=%s", value, default
+    )
     return default
 
 
