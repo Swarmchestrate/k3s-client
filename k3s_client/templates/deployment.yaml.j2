@@ -26,6 +26,7 @@ spec:
         {% endfor %}
       {% endif %}
     spec:
+      enableServiceLinks: {{ enable_service_links | tojson }}
       {% if service_account %}
       serviceAccountName: {{ service_account | tojson }}
       {% endif %}
