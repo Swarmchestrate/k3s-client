@@ -94,6 +94,39 @@ def _pod_spec(deployment):
     return deployment["spec"]["template"]["spec"]
 
 
+def test_pod_spec_disables_service_links_by_default():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    spec = _pod_spec(_deployment(manifests))
+    assert spec["enableServiceLinks"] is False
+
+
+def test_pod_spec_enable_service_links_can_be_overridden_from_tosca():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      enable_service_links: true
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    spec = _pod_spec(_deployment(manifests))
+    assert spec["enableServiceLinks"] is True
+
+
 def test_parse_file_mode():
     assert manifest_utils._parse_file_mode("0444") == 0o444 == 292
     assert manifest_utils._parse_file_mode("644") == 0o644

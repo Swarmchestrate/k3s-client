@@ -99,6 +99,27 @@ def _parse_file_mode(mode: Any) -> Optional[int]:
             return None
 
 
+def _parse_bool(value: Any, default: bool) -> bool:
+    """Parse loose boolean inputs commonly found in YAML/TOSCA properties."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "y", "on"}:
+        return True
+    if text in {"false", "0", "no", "n", "off"}:
+        return False
+
+    logger.warning(
+        "Ignoring unparseable boolean value %r; using default=%s", value, default
+    )
+    return default
+
+
 def _iter_volume_requirements(node: Dict[str, Any]):
     """Yield (target_node, mount_path) for each AttachesTo 'volume' requirement.
 
@@ -451,6 +472,10 @@ def get_kubernetes_manifest(
             ),
             "service_account": props.get("service_account"),
             "image_pull_secret": image_pull_secret,
+            "enable_service_links": _parse_bool(
+                props.get("enable_service_links", props.get("enableServiceLinks")),
+                default=False,
+            ),
         }
         manifests.append(_render_yaml("deployment.yaml.j2", deployment_context))
 
