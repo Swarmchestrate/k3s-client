@@ -1,0 +1,37 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    additionalArguments:
+      - "--certificatesresolvers.{{ cert_resolver }}.acme.email={{ acme_email }}"
+      - "--certificatesresolvers.{{ cert_resolver }}.acme.storage={{ acme_storage_path }}"
+      - "--certificatesresolvers.{{ cert_resolver }}.acme.httpchallenge.entrypoint=web"
+    ports:
+      web:
+        exposedPort: 80
+      websecure:
+        exposedPort: 443
+    deployment:
+      additionalVolumes:
+        - name: {{ persistent_volume_claim }}
+          persistentVolumeClaim:
+            claimName: {{ persistent_volume_claim }}
+    additionalVolumeMounts:
+      - name: {{ persistent_volume_claim }}
+        mountPath: {{ persistent_mount_path }}
+        readOnly: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ persistent_volume_claim }}
+  namespace: {{ persistent_volume_claim_namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ persistent_volume_claim_size }}
