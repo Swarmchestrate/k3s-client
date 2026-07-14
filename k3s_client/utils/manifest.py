@@ -19,6 +19,20 @@ from sardou import Sardou
 yaml = YAML()
 logger = logging.getLogger(__name__)
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
+DEFAULT_ACME_EMAIL = "admin@example.com"
+TRAEFIK_ACME_RESOLVER_NAME = "le"
+TRAEFIK_ACME_STORAGE_PATH = "/persistentdata/acme.json"
+TRAEFIK_ACME_VOLUME_NAME = "traefik-data"
+TRAEFIK_ACME_VOLUME_MOUNT_PATH = "/persistentdata"
+TRAEFIK_ACME_PVC_NAMESPACE = "kube-system"
+TRAEFIK_ACME_PVC_SIZE = "64Mi"
+TRAEFIK_DEFAULT_INGRESS_CLASS = "traefik"
+TRAEFIK_DEFAULT_HTTP_PATH = "/"
+TRAEFIK_DEFAULT_PATH_TYPE = "Prefix"
+TRAEFIK_DEFAULT_HTTP_ENTRYPOINT = "websecure"
+TRAEFIK_TCP_DEFAULT_ENTRYPOINT = "websecure"
+TRAEFIK_TCP_DEFAULT_PROTOCOL = "TCP"
+TRAEFIK_TCP_DEFAULT_PASSTHROUGH = True
 _template_loaders = [FileSystemLoader(str(TEMPLATE_DIR))]
 try:
     _template_loaders.append(PackageLoader("k3s_client", "templates"))
@@ -120,6 +134,216 @@ def _parse_bool(value: Any, default: bool) -> bool:
     return default
 
 
+def _parse_traefik_tcp_routes(
+    routes: Any,
+    *,
+    default_name: str,
+    default_namespace: Optional[str],
+    default_service_name: str,
+    default_service_port: int,
+) -> List[Dict[str, Any]]:
+    """Normalize optional Traefik IngressRouteTCP definitions.
+
+    Supported route keys:
+    - name
+    - namespace
+    - entry_points / entryPoints / entryPoint
+    - protocol (only TCP is supported)
+    - match OR host_sni / hostSNI
+    - service_name / serviceName
+    - service_port / servicePort / port
+    - tls_passthrough / tlsPassthrough / passthrough
+    """
+    if routes is None:
+        return []
+
+    if not isinstance(routes, list):
+        logger.warning("Ignoring non-list traefik_tcp_routes value: %r", routes)
+        return []
+
+    normalized: List[Dict[str, Any]] = []
+    for idx, route in enumerate(routes, start=1):
+        if not isinstance(route, dict):
+            logger.warning(
+                "Ignoring non-mapping traefik_tcp_routes[%d] value: %r", idx, route
+            )
+            continue
+
+        protocol = str(route.get("protocol", TRAEFIK_TCP_DEFAULT_PROTOCOL)).upper()
+        if protocol != TRAEFIK_TCP_DEFAULT_PROTOCOL:
+            logger.warning(
+                "Ignoring traefik_tcp_routes[%d] with unsupported protocol: %r",
+                idx,
+                protocol,
+            )
+            continue
+
+        entry_points = route.get(
+            "entryPoints",
+            route.get(
+                "entry_points",
+                route.get("entryPoint", [TRAEFIK_TCP_DEFAULT_ENTRYPOINT]),
+            ),
+        )
+        if isinstance(entry_points, str):
+            entry_points = [entry_points]
+        if not isinstance(entry_points, list) or not entry_points:
+            logger.warning(
+                "Ignoring traefik_tcp_routes[%d] with invalid entryPoints: %r",
+                idx,
+                entry_points,
+            )
+            continue
+
+        match = route.get("match")
+        if not match:
+            host_sni = route.get("hostSNI", route.get("host_sni"))
+            if host_sni:
+                match = f"HostSNI(`{host_sni}`)"
+
+        if not match:
+            logger.warning("Ignoring traefik_tcp_routes[%d] without match/hostSNI", idx)
+            continue
+
+        service_port = route.get(
+            "servicePort",
+            route.get("service_port", route.get("port", default_service_port)),
+        )
+        try:
+            service_port = int(service_port)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Ignoring traefik_tcp_routes[%d] with invalid service port: %r",
+                idx,
+                service_port,
+            )
+            continue
+
+        normalized.append(
+            {
+                "name": str(route.get("name") or f"{default_name}-passthrough"),
+                "namespace": str(route.get("namespace"))
+                if route.get("namespace")
+                else default_namespace,
+                "entry_points": [str(ep) for ep in entry_points],
+                "match": str(match),
+                "service_name": str(
+                    route.get(
+                        "serviceName", route.get("service_name", default_service_name)
+                    )
+                ),
+                "service_port": service_port,
+                "tls_passthrough": _parse_bool(
+                    route.get(
+                        "tlsPassthrough",
+                        route.get("tls_passthrough", route.get("passthrough")),
+                    ),
+                    default=TRAEFIK_TCP_DEFAULT_PASSTHROUGH,
+                ),
+            }
+        )
+
+    return normalized
+
+
+def _parse_ingress_definition(
+    ingress: Any,
+    *,
+    default_name: str,
+    default_namespace: Optional[str],
+    default_service_name: str,
+    default_service_port: int,
+    default_acme_email: str,
+) -> Optional[Dict[str, Any]]:
+    """Normalize an optional Traefik-backed HTTP ingress definition."""
+    if ingress is None:
+        return None
+
+    if not isinstance(ingress, dict):
+        logger.warning("Ignoring non-mapping ingress value: %r", ingress)
+        return None
+
+    domain = ingress.get("domain", ingress.get("host"))
+    if not domain:
+        logger.warning("Ignoring ingress without domain/host: %r", ingress)
+        return None
+
+    service_port = ingress.get(
+        "servicePort",
+        ingress.get("service_port", ingress.get("port", default_service_port)),
+    )
+    try:
+        service_port = int(service_port)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring ingress with invalid service port: %r", service_port)
+        return None
+
+    path = str(
+        ingress.get("path", ingress.get("pat", TRAEFIK_DEFAULT_HTTP_PATH))
+        or TRAEFIK_DEFAULT_HTTP_PATH
+    )
+    annotations = dict(ingress.get("annotations") or {})
+    entrypoint = str(
+        ingress.get(
+            "entryPoint", ingress.get("entrypoint", TRAEFIK_DEFAULT_HTTP_ENTRYPOINT)
+        )
+    )
+    tls_enabled = _parse_bool(ingress.get("tls"), default=True)
+    ingress_class_name = str(
+        ingress.get(
+            "ingressClassName", ingress.get("className", TRAEFIK_DEFAULT_INGRESS_CLASS)
+        )
+    )
+    cert_resolver = str(
+        ingress.get(
+            "cert_resolver",
+            ingress.get(
+                "certResolver",
+                ingress.get(
+                    "resolver",
+                    ingress.get("certresolver", TRAEFIK_ACME_RESOLVER_NAME),
+                ),
+            ),
+        )
+    )
+    effective_acme_email = default_acme_email
+
+    annotations.setdefault(
+        "traefik.ingress.kubernetes.io/router.entrypoints", entrypoint
+    )
+    if tls_enabled:
+        annotations.setdefault("traefik.ingress.kubernetes.io/router.tls", "true")
+        annotations.setdefault(
+            "traefik.ingress.kubernetes.io/router.tls.certresolver", cert_resolver
+        )
+        annotations.setdefault(
+            "traefik.ingress.kubernetes.io/router.tls.domains.0.main", str(domain)
+        )
+
+    return {
+        "name": str(ingress.get("name") or default_name),
+        "namespace": str(ingress.get("namespace"))
+        if ingress.get("namespace")
+        else default_namespace,
+        "domain": str(domain),
+        "path": path,
+        "path_type": str(
+            ingress.get("pathType", ingress.get("path_type", TRAEFIK_DEFAULT_PATH_TYPE))
+        ),
+        "service_name": str(
+            ingress.get(
+                "serviceName", ingress.get("service_name", default_service_name)
+            )
+        ),
+        "service_port": service_port,
+        "annotations": annotations,
+        "ingress_class_name": ingress_class_name,
+        "tls_enabled": tls_enabled,
+        "acme_email": effective_acme_email,
+        "cert_resolver": cert_resolver,
+    }
+
+
 def _iter_volume_requirements(node: Dict[str, Any]):
     """Yield (target_node, mount_path) for each AttachesTo 'volume' requirement.
 
@@ -178,6 +402,24 @@ def _render_yaml(template_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
     return yaml.load(StringIO(rendered))
 
 
+def _render_yaml_documents(
+    template_name: str, context: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    try:
+        template = jinja_env.get_template(template_name)
+    except TemplateNotFound as exc:
+        logger.error(
+            "Template '%s' not found. Filesystem template dir: %s",
+            template_name,
+            TEMPLATE_DIR.resolve(),
+        )
+        raise FileNotFoundError(
+            f"Template '{template_name}' not found. Expected under {TEMPLATE_DIR.resolve()}"
+        ) from exc
+    rendered = template.render(**context)
+    return [doc for doc in yaml.load_all(StringIO(rendered)) if doc is not None]
+
+
 def _read_tosca_file_content(tosca_file: str) -> str:
     input_path = Path(tosca_file).expanduser()
     logger.debug(
@@ -223,6 +465,7 @@ def get_kubernetes_manifest(
     tosca_file: Optional[str] = None,
     tosca_content: Optional[str] = None,
     image_pull_secret: Optional[str] = None,
+    acme_email: str = DEFAULT_ACME_EMAIL,
 ) -> List[Dict[str, Any]]:
     logger.debug(
         "Generating Kubernetes manifest",
@@ -230,6 +473,7 @@ def get_kubernetes_manifest(
             "has_tosca_file": bool(tosca_file),
             "has_tosca_content": bool(tosca_content),
             "image_pull_secret_set": bool(image_pull_secret),
+            "acme_email_set": bool(acme_email),
         },
     )
     if tosca_file:
@@ -255,7 +499,9 @@ def get_kubernetes_manifest(
         sorted(service_template.keys()) if isinstance(service_template, dict) else [],
     )
     node_templates = service_template.get("node_templates", {})
+
     affinity_map = Sardou(content=tosca_content).get_affinity()
+
     logger.debug(
         "Parsed TOSCA service template",
         extra={"node_template_count": len(node_templates)},
@@ -266,6 +512,10 @@ def get_kubernetes_manifest(
 
     manifests: List[Dict[str, Any]] = []
     pending_services: Dict[str, Dict[str, Any]] = {}
+    pending_ingress_route_tcp: List[Dict[str, Any]] = []
+    pending_ingresses: List[Dict[str, Any]] = []
+    traefik_acme_email = str(acme_email or DEFAULT_ACME_EMAIL)
+    traefik_cert_resolver = TRAEFIK_ACME_RESOLVER_NAME
 
     # File node templates (derived from Volume) are mounted into the workloads
     # that attach them via a 'volume' requirement.
@@ -301,6 +551,9 @@ def get_kubernetes_manifest(
             or name.replace("_", "-")
         )
         service_name = _label_by_semantic_key(labels, "service") or app_name
+        namespace = props.get("namespace")
+        if namespace is not None:
+            namespace = str(namespace)
 
         # Strip trailing "-<version>" from node name to avoid duplication
         # e.g. node "details_v1" → k3s_name "details-v1" → base "details"
@@ -452,6 +705,7 @@ def get_kubernetes_manifest(
 
         deployment_context = {
             "name": k3s_name_base,
+            "namespace": namespace,
             "version": version,
             "version_name": version_name,
             "replicas": replicas,
@@ -479,22 +733,98 @@ def get_kubernetes_manifest(
         }
         manifests.append(_render_yaml("deployment.yaml.j2", deployment_context))
 
+        first_service_port = service_ports[0]["port"] if service_ports else 443
+        pending_ingress_route_tcp.extend(
+            _parse_traefik_tcp_routes(
+                props.get("traefik_tcp_routes"),
+                default_name=service_name,
+                default_namespace=namespace,
+                default_service_name=app_name,
+                default_service_port=first_service_port,
+            )
+        )
+
+        # HTTP ingress: 'routes' (list of dicts with domain/port/path) takes priority
+        # over the legacy 'ingress' single-dict property.
+        routes_raw = props.get("routes")
+        ingress_sources: List[Any] = []
+        if routes_raw is not None:
+            if isinstance(routes_raw, list):
+                ingress_sources = routes_raw
+            elif isinstance(routes_raw, dict):
+                ingress_sources = [routes_raw]
+        elif props.get("ingress") is not None:
+            ing = props.get("ingress")
+            ingress_sources = [ing] if isinstance(ing, dict) else []
+
+        has_ingress = False
+        for ingress_src in ingress_sources:
+            ingress_definition = _parse_ingress_definition(
+                ingress_src,
+                default_name=service_name,
+                default_namespace=namespace,
+                default_service_name=app_name,
+                default_service_port=first_service_port,
+                default_acme_email=DEFAULT_ACME_EMAIL,
+            )
+            if ingress_definition is not None:
+                ingress_cert_resolver = ingress_definition.get("cert_resolver")
+                if ingress_cert_resolver:
+                    if traefik_cert_resolver == TRAEFIK_ACME_RESOLVER_NAME:
+                        traefik_cert_resolver = str(ingress_cert_resolver)
+                    elif traefik_cert_resolver != ingress_cert_resolver:
+                        logger.warning(
+                            "Multiple ingress cert resolvers requested; keeping %r and ignoring %r",
+                            traefik_cert_resolver,
+                            ingress_cert_resolver,
+                        )
+                pending_ingresses.append(ingress_definition)
+                has_ingress = True
+
+        if has_ingress:
+            service_ports = [
+                {key: value for key, value in sp.items() if key != "nodePort"}
+                for sp in service_ports
+            ]
+
         # One service per unique app_name — covers multi-version deployments
-        if service_ports and app_name not in pending_services:
+        service_key = f"{namespace or ''}:{app_name}"
+        if service_ports and service_key not in pending_services:
             svc_type = (
                 "NodePort"
-                if any("nodePort" in sp for sp in service_ports)
+                if not has_ingress and any("nodePort" in sp for sp in service_ports)
                 else "ClusterIP"
             )
-            pending_services[app_name] = {
+            pending_services[service_key] = {
                 "name": app_name,
+                "namespace": namespace,
                 "service_type": svc_type,
                 "service_ports": service_ports,
                 "selector": {"app": app_name},
             }
-            # Emit all services after all deployments
+
+        # Emit all network resources after all deployments
     for svc_context in pending_services.values():
         manifests.append(_render_yaml("service.yaml.j2", svc_context))
+    if pending_ingresses:
+        manifests.extend(
+            _render_yaml_documents(
+                "traefik-acme.yaml.j2",
+                {
+                    "acme_email": traefik_acme_email,
+                    "cert_resolver": traefik_cert_resolver,
+                    "acme_storage_path": TRAEFIK_ACME_STORAGE_PATH,
+                    "persistent_volume_claim": TRAEFIK_ACME_VOLUME_NAME,
+                    "persistent_mount_path": TRAEFIK_ACME_VOLUME_MOUNT_PATH,
+                    "persistent_volume_claim_namespace": TRAEFIK_ACME_PVC_NAMESPACE,
+                    "persistent_volume_claim_size": TRAEFIK_ACME_PVC_SIZE,
+                },
+            )
+        )
+    for ingress_context in pending_ingresses:
+        manifests.append(_render_yaml("ingress.yaml.j2", ingress_context))
+    for route_context in pending_ingress_route_tcp:
+        manifests.append(_render_yaml("ingress_route_tcp.yaml.j2", route_context))
 
     logger.info("Generated %d Kubernetes manifest objects", len(manifests))
 

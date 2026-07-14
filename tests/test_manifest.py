@@ -79,6 +79,9 @@ node_templates:
 
     assert manifests
     assert any(doc.get("kind") == "Deployment" for doc in manifests)
+    assert not any(doc.get("kind") == "Ingress" for doc in manifests)
+    assert not any(doc.get("kind") == "HelmChartConfig" for doc in manifests)
+    assert not any(doc.get("kind") == "PersistentVolumeClaim" for doc in manifests)
 
 
 def test_get_kubernetes_manifest_raises_for_invalid_yaml():
@@ -321,3 +324,265 @@ node_templates:
         second = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
 
     assert first == second
+
+
+def test_deployment_and_service_include_namespace_when_provided():
+    tosca_content = """
+node_templates:
+  caddy:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: caddy:2
+      namespace: caddy
+      ports:
+      - port: 443
+        targetPort: 443
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    deployment = next(d for d in manifests if d.get("kind") == "Deployment")
+    service = next(d for d in manifests if d.get("kind") == "Service")
+    assert deployment["metadata"]["namespace"] == "caddy"
+    assert service["metadata"]["namespace"] == "caddy"
+
+
+def test_generates_traefik_ingress_with_acme_resources_for_k3s():
+    tosca_content = """
+node_templates:
+  site_a:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:1.27-alpine
+      namespace: multidomain-poc
+      labels:
+        app: site-a
+      ports:
+      - port: 80
+        targetPort: 80
+      ingress:
+        domain: cloud-193-225-251-54.sztaki.science-cloud.hu
+        port: 80
+        path: /
+        email: emodi.mark@gmail.com
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    ingress = next(d for d in manifests if d.get("kind") == "Ingress")
+    assert ingress["apiVersion"] == "networking.k8s.io/v1"
+    assert ingress["metadata"]["name"] == "site-a"
+    assert ingress["metadata"]["namespace"] == "multidomain-poc"
+    assert (
+        ingress["metadata"]["annotations"][
+            "traefik.ingress.kubernetes.io/router.entrypoints"
+        ]
+        == "websecure"
+    )
+    assert (
+        ingress["metadata"]["annotations"]["traefik.ingress.kubernetes.io/router.tls"]
+        == "true"
+    )
+    assert (
+        ingress["metadata"]["annotations"][
+            "traefik.ingress.kubernetes.io/router.tls.certresolver"
+        ]
+        == "le"
+    )
+    assert ingress["spec"]["ingressClassName"] == "traefik"
+    assert (
+        ingress["spec"]["rules"][0]["host"]
+        == "cloud-193-225-251-54.sztaki.science-cloud.hu"
+    )
+    backend = ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]
+    assert backend["name"] == "site-a"
+    assert backend["port"]["number"] == 80
+    assert ingress["spec"]["tls"][0]["hosts"] == [
+        "cloud-193-225-251-54.sztaki.science-cloud.hu"
+    ]
+
+    chart_config = next(d for d in manifests if d.get("kind") == "HelmChartConfig")
+    assert chart_config["metadata"]["name"] == "traefik"
+    assert chart_config["metadata"]["namespace"] == "kube-system"
+    # email is always hardcoded to DEFAULT_ACME_EMAIL regardless of what is in TOSCA
+    assert (
+        f"--certificatesresolvers.le.acme.email={manifest_utils.DEFAULT_ACME_EMAIL}"
+        in chart_config["spec"]["valuesContent"]
+    )
+
+    pvc = next(d for d in manifests if d.get("kind") == "PersistentVolumeClaim")
+    assert pvc["metadata"]["name"] == "traefik-data"
+    assert pvc["metadata"]["namespace"] == "kube-system"
+    assert pvc["spec"]["resources"]["requests"]["storage"] == "64Mi"
+
+
+def test_generates_one_shared_acme_config_for_multiple_ingresses():
+    tosca_content = """
+node_templates:
+  site_a:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      namespace: multidomain-poc
+      labels:
+        app: site-a
+      ports:
+      - port: 80
+        targetPort: 80
+      ingress:
+        domain: cloud-193-225-251-54.sztaki.science-cloud.hu
+        email: emodi.mark@gmail.com
+  site_b:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      namespace: multidomain-poc
+      labels:
+        app: site-b
+      ports:
+      - port: 80
+        targetPort: 80
+      ingress:
+        domain: webswch.chickenkiller.com
+        email: emodi.mark@gmail.com
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    ingresses = [d for d in manifests if d.get("kind") == "Ingress"]
+    assert len(ingresses) == 2
+    assert sorted(i["spec"]["rules"][0]["host"] for i in ingresses) == [
+        "cloud-193-225-251-54.sztaki.science-cloud.hu",
+        "webswch.chickenkiller.com",
+    ]
+    assert len([d for d in manifests if d.get("kind") == "HelmChartConfig"]) == 1
+    assert len([d for d in manifests if d.get("kind") == "PersistentVolumeClaim"]) == 1
+
+
+def test_ingress_defaults_to_websecure_tls_service_port_and_shared_email():
+    tosca_content = """
+node_templates:
+  gateway:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      labels:
+        app: edge-gw
+      ports:
+      - port: 8080
+        targetPort: 8080
+      ingress:
+        domain: edge.example.com
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    ingress = next(d for d in manifests if d.get("kind") == "Ingress")
+    annotations = ingress["metadata"]["annotations"]
+    assert (
+        annotations["traefik.ingress.kubernetes.io/router.entrypoints"] == "websecure"
+    )
+    assert annotations["traefik.ingress.kubernetes.io/router.tls"] == "true"
+    assert annotations["traefik.ingress.kubernetes.io/router.tls.certresolver"] == "le"
+    assert (
+        ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["port"][
+            "number"
+        ]
+        == 8080
+    )
+    chart_config = next(d for d in manifests if d.get("kind") == "HelmChartConfig")
+    assert (
+        f"--certificatesresolvers.le.acme.email={manifest_utils.DEFAULT_ACME_EMAIL}"
+        in chart_config["spec"]["valuesContent"]
+    )
+    assert any(d.get("kind") == "PersistentVolumeClaim" for d in manifests)
+
+
+def test_ingress_tosca_email_is_ignored_and_hardcoded_default_is_used():
+    """TOSCA ingress 'email' field is ignored; email is always DEFAULT_ACME_EMAIL."""
+    tosca_content = """
+node_templates:
+  gateway:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      labels:
+        app: edge-gw
+      ports:
+      - port: 80
+        targetPort: 80
+      ingress:
+        domain: edge.example.com
+        email: override@example.com
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(
+            tosca_content=tosca_content,
+        )
+
+    chart_config = next(d for d in manifests if d.get("kind") == "HelmChartConfig")
+    # TOSCA email is ignored; the hardcoded default must appear
+    assert (
+        f"--certificatesresolvers.le.acme.email={manifest_utils.DEFAULT_ACME_EMAIL}"
+        in chart_config["spec"]["valuesContent"]
+    )
+    assert "override@example.com" not in chart_config["spec"]["valuesContent"]
+
+
+def test_ingress_uses_function_parameter_email_when_tosca_email_missing():
+    tosca_content = """
+node_templates:
+  gateway:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      labels:
+        app: edge-gw
+      ports:
+      - port: 80
+        targetPort: 80
+      ingress:
+        domain: edge.example.com
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(
+            tosca_content=tosca_content,
+            acme_email="parameter@example.com",
+        )
+
+    chart_config = next(d for d in manifests if d.get("kind") == "HelmChartConfig")
+    assert (
+        "--certificatesresolvers.le.acme.email=parameter@example.com"
+        in chart_config["spec"]["valuesContent"]
+    )
+
+
+def test_ingress_keeps_service_cluster_ip_and_drops_node_port():
+    tosca_content = """
+node_templates:
+  gateway:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      labels:
+        app: edge-gw
+      ports:
+      - port: 80
+        targetPort: 80
+        nodePort: 30080
+      ingress:
+        domain: edge.example.com
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    service = next(d for d in manifests if d.get("kind") == "Service")
+    assert service["spec"]["type"] == "ClusterIP"
+    assert "nodePort" not in service["spec"]["ports"][0]
