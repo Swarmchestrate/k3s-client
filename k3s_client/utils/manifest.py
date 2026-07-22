@@ -465,7 +465,7 @@ def get_kubernetes_manifest(
     tosca_file: Optional[str] = None,
     tosca_content: Optional[str] = None,
     image_pull_secret: Optional[str] = None,
-    acme_email: str = DEFAULT_ACME_EMAIL,
+    acme_email: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     logger.debug(
         "Generating Kubernetes manifest",
@@ -551,9 +551,6 @@ def get_kubernetes_manifest(
             or name.replace("_", "-")
         )
         service_name = _label_by_semantic_key(labels, "service") or app_name
-        namespace = props.get("namespace")
-        if namespace is not None:
-            namespace = str(namespace)
 
         # Strip trailing "-<version>" from node name to avoid duplication
         # e.g. node "details_v1" → k3s_name "details-v1" → base "details"
@@ -705,7 +702,6 @@ def get_kubernetes_manifest(
 
         deployment_context = {
             "name": k3s_name_base,
-            "namespace": namespace,
             "version": version,
             "version_name": version_name,
             "replicas": replicas,
@@ -738,7 +734,7 @@ def get_kubernetes_manifest(
             _parse_traefik_tcp_routes(
                 props.get("traefik_tcp_routes"),
                 default_name=service_name,
-                default_namespace=namespace,
+                default_namespace=None,
                 default_service_name=app_name,
                 default_service_port=first_service_port,
             )
@@ -762,7 +758,7 @@ def get_kubernetes_manifest(
             ingress_definition = _parse_ingress_definition(
                 ingress_src,
                 default_name=service_name,
-                default_namespace=namespace,
+                default_namespace=None,
                 default_service_name=app_name,
                 default_service_port=first_service_port,
                 default_acme_email=DEFAULT_ACME_EMAIL,
@@ -788,7 +784,7 @@ def get_kubernetes_manifest(
             ]
 
         # One service per unique app_name — covers multi-version deployments
-        service_key = f"{namespace or ''}:{app_name}"
+        service_key = app_name
         if service_ports and service_key not in pending_services:
             svc_type = (
                 "NodePort"
@@ -797,7 +793,6 @@ def get_kubernetes_manifest(
             )
             pending_services[service_key] = {
                 "name": app_name,
-                "namespace": namespace,
                 "service_type": svc_type,
                 "service_ports": service_ports,
                 "selector": {"app": app_name},

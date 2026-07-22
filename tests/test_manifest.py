@@ -89,6 +89,62 @@ def test_get_kubernetes_manifest_raises_for_invalid_yaml():
         manifest_utils.get_kubernetes_manifest(tosca_content="service_template: [")
 
 
+def test_get_kubernetes_manifest_validates_routes_strictly_when_supported():
+    tosca_content = """
+service_template:
+  node_templates:
+    web:
+      type: tosca.nodes.Swarm.Microservice
+      properties:
+        image: nginx:latest
+        ports:
+        - port: 80
+          targetPort: 80
+        routes:
+        - domain: web.example.com
+          port: 80
+          path: /
+"""
+
+    captured = {"contents": []}
+
+    class DummySardou:
+        def __init__(self, content):
+            captured["contents"].append(content)
+
+        def get_affinity(self):
+            return {}
+
+    with patch("k3s_client.utils.manifest.Sardou", DummySardou):
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    assert len(captured["contents"]) == 1
+    assert "routes:" in captured["contents"][0]
+    assert any(doc.get("kind") == "Ingress" for doc in manifests)
+
+
+def test_get_kubernetes_manifest_propagates_sardou_validation_error():
+      tosca_content = """
+  service_template:
+    node_templates:
+      web:
+        type: tosca.nodes.Swarm.Microservice
+        properties:
+          image: nginx:latest
+  """
+
+      class FailingSardou:
+          def __init__(self, content):
+              pass
+
+          def get_affinity(self):
+              raise ValueError("validation failed")
+
+      with patch("k3s_client.utils.manifest.Sardou", FailingSardou):
+          with pytest.raises(ValueError, match="validation failed"):
+              manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+
 def _deployment(manifests):
     return next(d for d in manifests if d.get("kind") == "Deployment")
 
@@ -326,14 +382,13 @@ node_templates:
     assert first == second
 
 
-def test_deployment_and_service_include_namespace_when_provided():
+def test_deployment_and_service_do_not_include_namespace():
     tosca_content = """
 node_templates:
-  caddy:
+  nginx:
     type: tosca.nodes.Swarm.Microservice
     properties:
-      image: caddy:2
-      namespace: caddy
+      image: nginx:1.27-alpine
       ports:
       - port: 443
         targetPort: 443
@@ -344,8 +399,38 @@ node_templates:
 
     deployment = next(d for d in manifests if d.get("kind") == "Deployment")
     service = next(d for d in manifests if d.get("kind") == "Service")
-    assert deployment["metadata"]["namespace"] == "caddy"
-    assert service["metadata"]["namespace"] == "caddy"
+    assert "namespace" not in deployment["metadata"]
+    assert "namespace" not in service["metadata"]
+
+
+def test_file_configmap_does_not_include_namespace():
+    tosca_content = """
+node_templates:
+  app:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:1.27-alpine
+      ports:
+      - port: 80
+        targetPort: 80
+    requirements:
+    - volume:
+        node: app_index
+        relationship:
+          properties:
+            mount_path: /usr/share/nginx/html/index.html
+  app_index:
+    type: tosca.nodes.Swarm.File
+    properties:
+      content: hello
+"""
+
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    configmap = next(d for d in manifests if d.get("kind") == "ConfigMap")
+    assert "namespace" not in configmap["metadata"]
 
 
 def test_generates_traefik_ingress_with_acme_resources_for_k3s():
@@ -355,7 +440,6 @@ node_templates:
     type: tosca.nodes.Swarm.Microservice
     properties:
       image: nginx:1.27-alpine
-      namespace: multidomain-poc
       labels:
         app: site-a
       ports:
@@ -374,7 +458,6 @@ node_templates:
     ingress = next(d for d in manifests if d.get("kind") == "Ingress")
     assert ingress["apiVersion"] == "networking.k8s.io/v1"
     assert ingress["metadata"]["name"] == "site-a"
-    assert ingress["metadata"]["namespace"] == "multidomain-poc"
     assert (
         ingress["metadata"]["annotations"][
             "traefik.ingress.kubernetes.io/router.entrypoints"
@@ -425,7 +508,6 @@ node_templates:
     type: tosca.nodes.Swarm.Microservice
     properties:
       image: nginx:latest
-      namespace: multidomain-poc
       labels:
         app: site-a
       ports:
@@ -438,7 +520,6 @@ node_templates:
     type: tosca.nodes.Swarm.Microservice
     properties:
       image: nginx:latest
-      namespace: multidomain-poc
       labels:
         app: site-b
       ports:
