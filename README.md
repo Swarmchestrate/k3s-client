@@ -60,33 +60,43 @@ This will install all dependencies and the Puccini TOSCA parser required for man
 
 | Method | Parameters | Description |
 |--------|------------|-------------|
-| `create_registry_secret` | `name`, `registry`, `username`, `password`, `email=None`, `namespace=None`, `replace=True` | Create a Docker registry pull secret |
-| `apply_manifest` | `manifest_file`, `namespace=None` | Apply a Kubernetes manifest |
-| `delete_manifest` | `manifest_file` | Delete resources defined in a manifest |
+| `create_registry_secret` | `name`, `registry`, `username`, `password`, `email=None`, `namespace=None`, `replace=True`, `dry_run=None` | Create a Docker registry pull secret |
+| `apply_manifest` | `manifest_file`, `namespace=None`, `dry_run=None` | Apply a Kubernetes manifest |
+| `delete_manifest` | `manifest_file`, `dry_run=None` | Delete resources defined in a manifest |
 | `apply_tosca` | `tosca_file=None`, `tosca_content=None`, `namespace=None`, `image_pull_secret=None`, `acme_email=None`, `dry_run=False`, `output_manifest_file=None` | One-call flow: generate manifests from TOSCA and optionally apply with standardized output |
-| `create_pod` | `msid`, `nodeid=None`, `namespace=None` | Create one pod for a microservice |
-| `delete_pod` | `msid`, `podid=None`, `namespace=None` | Delete one pod for a microservice |
-| `scale_to` | `msid`, `count`, `namespace=None` | Scale a microservice to exact replica count |
-| `migrate_pod` | `msid`, `podid=None`, `nodeid=None`, `namespace=None` | Move a pod to another node |
-| `delete_microservice` | `app_label`, `namespace=None` | Delete all resources for a given app label |
-| `get_pod_node_mapping` | `namespace=None`, `label_selector=None` | Return pod-to-node mapping by microservice |
+| `create_pod` | `msid`, `nodeid=None`, `namespace=None`, `dry_run=None` | Create one pod for a microservice |
+| `delete_pod` | `msid`, `podid=None`, `namespace=None`, `dry_run=None` | Delete one pod for a microservice |
+| `scale_to` | `msid`, `count`, `namespace=None`, `dry_run=None` | Scale a microservice to exact replica count |
+| `migrate_pod` | `msid`, `podid=None`, `nodeid=None`, `namespace=None`, `dry_run=None` | Move a pod to another node |
+| `delete_microservice` | `app_label`, `namespace=None`, `dry_run=None` | Delete all resources for a given app label |
+| `get_pod_node_mapping` | `namespace=None`, `label_selector=None`, `dry_run=None` | Return pod-to-node mapping by microservice |
 
 Deployment model:
 1. Deploy applications using `apply_manifest`.
 2. Perform runtime pod operations (`create_pod`, `delete_pod`, `scale_to`, `migrate_pod`) on workloads created by that manifest.
 3. Remove applications using `delete_manifest`.
 
-For pod-level methods, `msid` should match the deployed microservice/deployment name from the applied manifest.
+Runtime behavior and limitations:
+1. Pod operations update live cluster state, not the original YAML file on disk.
+2. For Deployment-managed microservices, `create_pod(msid)` and `delete_pod(msid)` should be read as scale `+1` and scale `-1`; `scale_to(msid, count)` is the most direct exact-replica operation.
+3. Deleting a specific pod from a Deployment without also adjusting desired replicas will cause Kubernetes to create a replacement pod.
+4. Creating a pod on a specific node or migrating a pod to another node is not a native in-place Deployment action in Kubernetes. Those operations depend on the swarm-agent implementation recreating or cloning workload instances with the requested placement.
+5. `migrate_pod` should be treated as an ordered recreate flow on the target node, not as moving a running pod between nodes.
+6. Runtime changes affect the live workload in the cluster, but they do not rewrite the source manifest file that was originally applied.
 
-For one-call TOSCA generate/apply workflow, see [examples/apply_tosca_example.py](examples/apply_tosca_example.py).
+Notes:
+1. For pod-level methods, `msid` should match the deployed microservice/deployment name from the applied manifest.
+2. For one-call TOSCA generate/apply workflow, see [examples/apply_tosca_example.py](examples/apply_tosca_example.py).
+3. For pod-to-node mapping usage, see [examples/pod_node_mapping_example.py](examples/pod_node_mapping_example.py).
 
-For pod-to-node mapping usage, see [examples/pod_node_mapping_example.py](examples/pod_node_mapping_example.py).
+### Dry Run (All `ApplicationManager` Methods)
 
-### Dry Run (`apply_tosca`)
+All `ApplicationManager` methods support dry-run behavior.
 
-`apply_tosca` supports dry-run mode to generate manifests and return a standardized summary without applying resources.
-
-Dry-run options:
+Dry-run rules:
+1. If `dry_run` is omitted on a method call, `dry_run_by_default` from initialization is used.
+2. If `dry_run=True`, the method returns a preview response and does not execute the swarm-agent action.
+3. If `dry_run=False`, the method executes normally.
 
 1. Dry run by default at initialization
 
@@ -94,24 +104,27 @@ Dry-run options:
 from k3s_client.api.applications import ApplicationManager
 
 manager = ApplicationManager(dry_run_by_default=True)
-preview = manager.apply_tosca(tosca_file="examples/Bookinfo.yaml")
+
+# Dry-run by default for any method
+preview = manager.create_pod(msid="productpage", namespace="default")
 ```
 
-2. Per-method dry run control
+2. Per-method override
 
 ```python
 from k3s_client.api.applications import ApplicationManager
 
 manager = ApplicationManager(dry_run_by_default=True)
 
-# Override default for this call
-apply_result = manager.apply_tosca(
-    tosca_file="examples/Bookinfo.yaml",
+# Force execution for this call only
+result = manager.create_pod(
+    msid="productpage",
+    namespace="default",
     dry_run=False,
 )
 ```
 
-Standardized response fields include:
+`apply_tosca` dry-run response includes generation details such as:
 
 - `ok`: operation success flag
 - `mode`: `"dry-run"` or `"apply"`
@@ -120,6 +133,14 @@ Standardized response fields include:
 - `manifest.kind_summary`: resource count by Kubernetes kind
 - `applied`: whether apply was executed
 - `agent_response`: swarm-agent response when apply runs
+
+For other methods, dry-run responses include:
+
+- `ok`: operation success flag
+- `operation`: method operation name
+- `mode`: `"dry-run"`
+- `executed`: `False`
+- `params`: the request payload that would be sent
 
 ---
 
@@ -157,6 +178,8 @@ The `examples/` directory contains complete runnable scripts:
 | `manifest_apply_example.py` | Applying a generated manifest to the cluster |
 | `manifest_delete_example.py` | Deleting resources defined in a manifest |
 | `scale_microservice_example.py` | Scale a deployment to an exact replica count |
+| `pod_runtime_operations_example.py` | Apply manifest first, then run `create_pod` / `delete_pod` / `scale_to` runtime operations |
+| `optimizer_actions_example.py` | Execute an ordered optimizer action list (`create_pod`, `delete_pod`, `scale_to`) |
 | `delete_microservice_example.py` | Delete a microservice deployment and service |
 | `pod_node_mapping_example.py` | Show pod-to-node mapping for a namespace |
 
