@@ -124,7 +124,7 @@ service_template:
 
 
 def test_get_kubernetes_manifest_propagates_sardou_validation_error():
-      tosca_content = """
+    tosca_content = """
   service_template:
     node_templates:
       web:
@@ -133,16 +133,16 @@ def test_get_kubernetes_manifest_propagates_sardou_validation_error():
           image: nginx:latest
   """
 
-      class FailingSardou:
-          def __init__(self, content):
-              pass
+    class FailingSardou:
+        def __init__(self, content):
+            pass
 
-          def get_affinity(self):
-              raise ValueError("validation failed")
+        def get_affinity(self):
+            raise ValueError("validation failed")
 
-      with patch("k3s_client.utils.manifest.Sardou", FailingSardou):
-          with pytest.raises(ValueError, match="validation failed"):
-              manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+    with patch("k3s_client.utils.manifest.Sardou", FailingSardou):
+        with pytest.raises(ValueError, match="validation failed"):
+            manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
 
 
 def _deployment(manifests):
