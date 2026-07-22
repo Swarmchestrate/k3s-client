@@ -78,11 +78,12 @@ Deployment model:
 
 Runtime behavior and limitations:
 1. Pod operations update live cluster state, not the original YAML file on disk.
-2. For Deployment-managed microservices, `create_pod(msid)` and `delete_pod(msid)` should be read as scale `+1` and scale `-1`; `scale_to(msid, count)` is the most direct exact-replica operation.
-3. Deleting a specific pod from a Deployment without also adjusting desired replicas will cause Kubernetes to create a replacement pod.
-4. Creating a pod on a specific node or migrating a pod to another node is not a native in-place Deployment action in Kubernetes. Those operations depend on the swarm-agent implementation recreating or cloning workload instances with the requested placement.
-5. `migrate_pod` should be treated as an ordered recreate flow on the target node, not as moving a running pod between nodes.
-6. Runtime changes affect the live workload in the cluster, but they do not rewrite the source manifest file that was originally applied.
+2. Manifest re-apply uses server-side apply with a field manager, so runtime-managed fields are less likely to be clobbered by a later reapply.
+3. For Deployment-managed microservices, `create_pod(msid)` and `delete_pod(msid)` should be read as scale `+1` and scale `-1`; `scale_to(msid, count)` is the most direct exact-replica operation.
+4. Deleting a specific pod from a Deployment without also adjusting desired replicas will cause Kubernetes to create a replacement pod.
+5. Creating a pod on a specific node or migrating a pod to another node is not a native in-place Deployment action in Kubernetes. Those operations depend on the swarm-agent implementation recreating or cloning workload instances with the requested placement.
+6. `migrate_pod` should be treated as an ordered recreate flow on the target node, not as moving a running pod between nodes.
+7. Runtime changes affect the live workload in the cluster, but they do not rewrite the source manifest file that was originally applied.
 
 Notes:
 1. For pod-level methods, `msid` should match the deployed microservice/deployment name from the applied manifest.
