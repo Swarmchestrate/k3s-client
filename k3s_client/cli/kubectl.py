@@ -46,11 +46,24 @@ class Kubectl:
     # --------------------
     # Manifest operations
     # --------------------
-    def apply_manifest(self, manifest_path: str) -> str:
-        """Apply a YAML manifest file."""
+    def apply_manifest(
+        self,
+        manifest_path: str,
+        field_manager: str = "tosca-controller",
+    ) -> str:
+        """Apply a YAML manifest file using server-side apply."""
         if not os.path.exists(manifest_path):
             raise FileNotFoundError(f"Manifest file not found: {manifest_path}")
-        return self._run(self._base_cmd() + ["apply", "-f", manifest_path])
+        return self._run(
+            self._base_cmd()
+            + [
+                "apply",
+                "--server-side",
+                f"--field-manager={field_manager}",
+                "-f",
+                manifest_path,
+            ]
+        )
 
     def delete_manifest(self, manifest_path: str) -> str:
         """Delete a YAML manifest file."""

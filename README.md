@@ -1,26 +1,45 @@
 # k3s-client
 
-A lightweight Python client for managing microservices on Kubernetes k3s clusters. Provides a clean API layer for deploying applications, managing secrets and ConfigMaps, generating Kubernetes manifests from TOSCA definitions, and performing node-aware scheduling operations.
+A lightweight Python client for managing microservices on Kubernetes k3s clusters through swarm-agent. It provides a clean API layer for registry/configmap operations, manifest orchestration, pod operations, and TOSCA-based manifest generation.
+
+Quick start:
+
+```bash
+pip install k3s-client
+```
+
+```python
+from k3s_client.api.applications import ApplicationManager
+
+manager = ApplicationManager(dry_run_by_default=True)
+
+# Generate manifests only (dry run)
+preview = manager.apply_tosca(
+    tosca_file="examples/Bookinfo.yaml",
+    output_manifest_file="generated-manifests.yaml",
+)
+
+# Apply to cluster
+result = manager.apply_tosca(
+    tosca_file="examples/Bookinfo.yaml",
+    output_manifest_file="generated-manifests.yaml",
+    dry_run=False,
+)
+```
 
 ---
 
 ## Features
 
 - **Registry Secret Management** — Create and rotate Docker registry secrets for private image pulls
-- **ConfigMap Management** — Create ConfigMaps from literals or files
-- **Microservice Lifecycle** — Scale, update images, migrate nodes, and delete microservices
+- **Microservice Scaling** — Scale deployments and manipulate pods for optimizer workflows
 - **Manifest Generation** — Generate Kubernetes manifests from TOSCA definitions
-- **Node-Aware Scheduling** — Migrate microservices across nodes using label-based selectors
-- **Pod Management** — List and launch pods with node affinity support
-- **Kubectl Wrapper** — Declarative apply and delete via kubectl
-
+- **Pod Mapping** — Query pod-to-node mapping for placement decisions
 ---
 
 ## Prerequisites
 
 - Python **3.12** or higher
-- A running **k3s server** with a valid kubeconfig (default: `/etc/rancher/k3s/k3s.yaml`)
-- `kubectl` installed
 
 ---
 
@@ -41,18 +60,88 @@ This will install all dependencies and the Puccini TOSCA parser required for man
 
 | Method | Parameters | Description |
 |--------|------------|-------------|
-| `create_registry_secret` | `name`, `registry`, `username`, `password`, `namespace=None`, `replace=True` | Create a Docker registry pull secret |
-| `create_configmap` | `name`, `namespace=None`, `from_literal=None`, `from_file=None` | Create a ConfigMap from literals or files |
-| `delete_configmap` | `name`, `namespace=None` | Delete a ConfigMap by name |
-| `create_registry_secret` | `name`, `registry`, `username`, `password`, `namespace=None`, `replace=True` | Create a Docker registry pull secret |
-| `apply_manifest` | `manifest_file`, `namespace=None` | Apply a Kubernetes manifest via kubectl |
-| `delete_manifest` | `manifest_file` | Delete resources defined in a manifest |
-| `create_microservice` | `deployment_name`, `image`, `container_name='app'`, `replicas=1`, `namespace=None`, `labels=None`, `env=None`, `ports=None`, `node_selector=None`, `service_type='ClusterIP'` | Create a new deployment and optional service |
-| `scale_microservice` | `deployment_name`, `replicas`, `namespace=None` | Scale a deployment |
-| `update_microservice_image` | `deployment_name`, `container_name`, `new_image`, `namespace=None` | Update a container image in-place |
-| `migrate_microservice_node` | `deployment_name`, `node_selector`, `namespace=None` | Migrate a deployment to a different node |
-| `delete_microservice` | `app_label`, `namespace=None` | Delete all resources for a given app label |
-| `get_pod_node_mapping` | `namespace=None`, `label_selector=None` | Return a mapping of pod names to node names |
+| `create_registry_secret` | `name`, `registry`, `username`, `password`, `email=None`, `namespace=None`, `replace=True`, `dry_run=None` | Create a Docker registry pull secret |
+| `apply_manifest` | `manifest_file`, `namespace=None`, `dry_run=None` | Apply a Kubernetes manifest |
+| `delete_manifest` | `manifest_file`, `dry_run=None` | Delete resources defined in a manifest |
+| `apply_tosca` | `tosca_file=None`, `tosca_content=None`, `namespace=None`, `image_pull_secret=None`, `acme_email=None`, `dry_run=False`, `output_manifest_file=None` | One-call flow: generate manifests from TOSCA and optionally apply with standardized output |
+| `create_pod` | `msid`, `nodeid=None`, `namespace=None`, `dry_run=None` | Create one pod for a microservice |
+| `delete_pod` | `msid`, `podid=None`, `namespace=None`, `dry_run=None` | Delete one pod for a microservice |
+| `scale_to` | `msid`, `count`, `namespace=None`, `dry_run=None` | Scale a microservice to exact replica count |
+| `migrate_pod` | `msid`, `podid=None`, `nodeid=None`, `namespace=None`, `dry_run=None` | Move a pod to another node |
+| `delete_microservice` | `app_label`, `namespace=None`, `dry_run=None` | Delete all resources for a given app label |
+| `get_pod_node_mapping` | `namespace=None`, `label_selector=None`, `dry_run=None` | Return pod-to-node mapping by microservice |
+
+Deployment model:
+1. Deploy applications using `apply_manifest`.
+2. Perform runtime pod operations (`create_pod`, `delete_pod`, `scale_to`, `migrate_pod`) on workloads created by that manifest.
+3. Remove applications using `delete_manifest`.
+
+Runtime behavior and limitations:
+1. Pod operations update live cluster state, not the original YAML file on disk.
+2. Manifest re-apply uses server-side apply with a field manager, so runtime-managed fields are less likely to be clobbered by a later reapply.
+3. For Deployment-managed microservices, `create_pod(msid)` and `delete_pod(msid)` should be read as scale `+1` and scale `-1`; `scale_to(msid, count)` is the most direct exact-replica operation.
+4. Deleting a specific pod from a Deployment without also adjusting desired replicas will cause Kubernetes to create a replacement pod.
+5. Creating a pod on a specific node or migrating a pod to another node is not a native in-place Deployment action in Kubernetes. Those operations depend on the swarm-agent implementation recreating or cloning workload instances with the requested placement.
+6. `migrate_pod` should be treated as an ordered recreate flow on the target node, not as moving a running pod between nodes.
+7. Runtime changes affect the live workload in the cluster, but they do not rewrite the source manifest file that was originally applied.
+
+Notes:
+1. For pod-level methods, `msid` should match the deployed microservice/deployment name from the applied manifest.
+2. For one-call TOSCA generate/apply workflow, see [examples/apply_tosca_example.py](examples/apply_tosca_example.py).
+3. For pod-to-node mapping usage, see [examples/pod_node_mapping_example.py](examples/pod_node_mapping_example.py).
+
+### Dry Run (All `ApplicationManager` Methods)
+
+All `ApplicationManager` methods support dry-run behavior.
+
+Dry-run rules:
+1. If `dry_run` is omitted on a method call, `dry_run_by_default` from initialization is used.
+2. If `dry_run=True`, the method returns a preview response and does not execute the swarm-agent action.
+3. If `dry_run=False`, the method executes normally.
+
+1. Dry run by default at initialization
+
+```python
+from k3s_client.api.applications import ApplicationManager
+
+manager = ApplicationManager(dry_run_by_default=True)
+
+# Dry-run by default for any method
+preview = manager.create_pod(msid="productpage", namespace="default")
+```
+
+2. Per-method override
+
+```python
+from k3s_client.api.applications import ApplicationManager
+
+manager = ApplicationManager(dry_run_by_default=True)
+
+# Force execution for this call only
+result = manager.create_pod(
+    msid="productpage",
+    namespace="default",
+    dry_run=False,
+)
+```
+
+`apply_tosca` dry-run response includes generation details such as:
+
+- `ok`: operation success flag
+- `mode`: `"dry-run"` or `"apply"`
+- `manifest.file`: generated manifest file path
+- `manifest.resource_count`: number of rendered resources
+- `manifest.kind_summary`: resource count by Kubernetes kind
+- `applied`: whether apply was executed
+- `agent_response`: swarm-agent response when apply runs
+
+For other methods, dry-run responses include:
+
+- `ok`: operation success flag
+- `operation`: method operation name
+- `mode`: `"dry-run"`
+- `executed`: `False`
+- `params`: the request payload that would be sent
 
 ---
 
@@ -61,7 +150,6 @@ This will install all dependencies and the Puccini TOSCA parser required for man
 | Method | Parameters | Description |
 |--------|------------|-------------|
 | `list_pods` | `namespace=None`, `label_selector=None` | List pods, optionally filtered by label |
-| `launch_pod` | `name`, `image`, `pod_labels=None`, `node_labels=None`, `node_name=None`, `namespace=None`, `container_port=None` | Launch a pod for internal testing with optional node affinity |
 
 ---
 
@@ -69,16 +157,13 @@ This will install all dependencies and the Puccini TOSCA parser required for man
 
 | Function | Parameters | Description |
 |----------|------------|-------------|
-| `get_kubernetes_manifest` | `tosca_yaml`, `image_pull_secret=None` | Generate Kubernetes manifests from a TOSCA definition |
+| `get_kubernetes_manifest` | `tosca_file=None`, `tosca_content=None`, `image_pull_secret=None`, `acme_email=None` | Generate Kubernetes manifests from a TOSCA definition |
 
----
+Provide exactly one input source: `tosca_file` or `tosca_content`.
 
-### `Kubectl`
+HTTP routing is optional. Add a `routes` list under a microservice properties block to generate Kubernetes `Ingress` resources.
 
-| Method | Parameters | Description |
-|--------|------------|-------------|
-| `apply` | `manifest_path=None`, `configmap_name=None`, `namespace=None`, `from_literal=None`, `from_file=None` | Apply resources declaratively |
-| `delete` | `manifest_path` | Delete resources from a manifest |
+Defaults are applied for unspecified route/ingress fields (for example class, entry point, TLS, and cert resolver).
 
 ---
 
@@ -89,30 +174,23 @@ The `examples/` directory contains complete runnable scripts:
 | File | Description |
 |------|-------------|
 | `registry_secret_example.py` | Managing Docker registry secrets |
-| `configmap_example.py` | Creating ConfigMaps from literals and files |
+| `apply_tosca_example.py` | One-call TOSCA workflow (dry-run and apply) |
 | `manifest_generator_example.py` | Generating Kubernetes manifests from TOSCA definitions |
 | `manifest_apply_example.py` | Applying a generated manifest to the cluster |
 | `manifest_delete_example.py` | Deleting resources defined in a manifest |
-| `deploy_microservice_example.py` | Create a new deployment and optional service |
-| `scale_microservice_example.py` | Scale a deployment by replica count |
-| `update_microservice_image_example.py` | Update a deployment container image |
-| `migrate_microservice_node_example.py` | Migrate a deployment to specific nodes |
+| `scale_microservice_example.py` | Scale a deployment to an exact replica count |
+| `pod_runtime_operations_example.py` | Apply manifest first, then run `create_pod` / `delete_pod` / `scale_to` runtime operations |
+| `optimizer_actions_example.py` | Execute an ordered optimizer action list (`create_pod`, `delete_pod`, `scale_to`) |
 | `delete_microservice_example.py` | Delete a microservice deployment and service |
 | `pod_node_mapping_example.py` | Show pod-to-node mapping for a namespace |
 
 Run any example:
 
 ```bash
-python examples/scale_microservice_example.py
+.venv/bin/python examples/scale_microservice_example.py
 ```
 
-By default, examples use the k3s kubeconfig at `/etc/rancher/k3s/k3s.yaml`. You can also override this path in the script or via environment configuration when needed.
-
-Set the environment variable like this:
-
-```bash
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-```
+Examples use swarm-agent mode and default to local in-agent endpoint behavior.
 
 ---
 

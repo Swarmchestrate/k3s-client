@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "k3s-client"
-version = "0.2.4"
+version = "0.3.0"
 description = "Swarmchestrate k3s client"
 readme = "README.md"
 authors = [
@@ -17,7 +17,7 @@ dependencies = [
     "kubernetes>=26.1.0",
     "jinja2>=3.1.0",
     "ruamel.yaml>=0.17.0",
-    "sardou>=0.12.3",
+    "sardou>=0.12.4",
     "ruff>=0.14.13"
 ]
 requires-python = ">=3.12,<4.0"

@@ -1,13 +1,16 @@
-import base64
 import logging
-import json
-from kubernetes import client
-from kubernetes.client.rest import ApiException
+import os
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+
+from ruamel.yaml import YAML
+
 from k3s_client.exceptions import K3sClientError
-from k3s_client.utils.kubeconfig import load_kubeconfig
-from k3s_client.cli.kubectl import Kubectl
+from k3s_client.agent import SwarmAgentClient
+from k3s_client.utils.manifest import get_kubernetes_manifest
 
 logger = logging.getLogger(__name__)
+yaml = YAML()
 
 
 def handle_errors(func):
@@ -24,28 +27,163 @@ def handle_errors(func):
 
 
 class ApplicationManager:
-    """Manage applications (Deployments, Services, ConfigMaps) via manifests and registry secrets."""
+    """Manage applications by delegating operations to swarm-agent."""
 
     @handle_errors
-    def __init__(self, kubeconfig_path=None, use_kubectl=True, default_namespace=None):
-        load_kubeconfig(kubeconfig_path)
-        self.v1 = client.CoreV1Api()
-        self.apps_v1 = client.AppsV1Api()
-        self.kubectl = Kubectl(kubeconfig=kubeconfig_path, use_kubectl=use_kubectl)
+    def __init__(
+        self,
+        kubeconfig_path=None,
+        use_kubectl=True,
+        default_namespace=None,
+        execution_mode="swarm-agent",
+        swarm_agent_url=None,
+        swarm_agent_token=None,
+        dry_run_by_default: bool = False,
+    ):
+        self.execution_mode = str(execution_mode or "swarm-agent").strip().lower()
+        if self.execution_mode != "swarm-agent":
+            raise ValueError("execution_mode must be 'swarm-agent'")
+
+        # Legacy init params are accepted for backward compatibility.
+        _ = kubeconfig_path, use_kubectl
+        base_url = swarm_agent_url or os.getenv("SWARM_AGENT_URL")
+        token = swarm_agent_token or os.getenv("SWARM_AGENT_TOKEN")
+        self.agent = SwarmAgentClient(base_url=base_url, token=token)
+
         self.manifest_registry = {}
         self.default_namespace = default_namespace or "default"
+        self.dry_run_by_default = bool(dry_run_by_default)
         logger.info(
-            "Initialized ApplicationManager with namespace=%s", self.default_namespace
+            "Initialized ApplicationManager with namespace=%s mode=%s dry_run_by_default=%s",
+            self.default_namespace,
+            self.execution_mode,
+            self.dry_run_by_default,
         )
+
+    def _agent_execute(self, action, params):
+        return self.agent.execute(action=action, params=params)
+
+    def _effective_dry_run(self, dry_run: bool | None) -> bool:
+        return self.dry_run_by_default if dry_run is None else bool(dry_run)
+
+    @staticmethod
+    def _dry_run_response(operation: str, params: dict):
+        return {
+            "ok": True,
+            "operation": operation,
+            "mode": "dry-run",
+            "executed": False,
+            "params": params,
+        }
+
+    @staticmethod
+    def _write_manifest_documents(manifests, output_path: str) -> str:
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        with path.open("w", encoding="utf-8") as f:
+            for i, manifest in enumerate(manifests):
+                if i > 0:
+                    f.write("---\n")
+                yaml.dump(manifest, f)
+        return str(path)
+
+    @staticmethod
+    def _manifest_kind_summary(manifests):
+        summary = {}
+        for manifest in manifests:
+            kind = str((manifest or {}).get("kind") or "Unknown")
+            summary[kind] = summary.get(kind, 0) + 1
+        return summary
+
+    # --------------------
+    # Deploy workflow
+    # --------------------
+    @handle_errors
+    def apply_tosca(
+        self,
+        *,
+        tosca_file: str = None,
+        tosca_content: str = None,
+        namespace: str = None,
+        image_pull_secret: str = None,
+        acme_email: str = None,
+        dry_run: bool | None = None,
+        output_manifest_file: str = None,
+    ):
+        """Generate manifests from TOSCA and optionally apply them.
+
+        Returns a standardized response object with generation/apply metadata.
+        """
+        effective_namespace = namespace or self.default_namespace
+        effective_dry_run = self._effective_dry_run(dry_run)
+
+        manifests = get_kubernetes_manifest(
+            tosca_file=tosca_file,
+            tosca_content=tosca_content,
+            image_pull_secret=image_pull_secret,
+            acme_email=acme_email,
+        )
+
+        if output_manifest_file:
+            manifest_file = self._write_manifest_documents(
+                manifests, output_manifest_file
+            )
+        else:
+            with NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".yaml", delete=False
+            ) as tmp:
+                manifest_file = self._write_manifest_documents(manifests, tmp.name)
+
+        apply_response = None
+        if not effective_dry_run:
+            apply_response = self.apply_manifest(
+                manifest_file=manifest_file,
+                namespace=effective_namespace,
+                dry_run=False,
+            )
+
+        return {
+            "ok": True,
+            "operation": "apply_tosca",
+            "mode": "dry-run" if effective_dry_run else "apply",
+            "namespace": effective_namespace,
+            "input": {
+                "tosca_file": tosca_file,
+                "has_tosca_content": bool(tosca_content),
+                "image_pull_secret_set": bool(image_pull_secret),
+                "acme_email_set": bool(acme_email),
+            },
+            "manifest": {
+                "file": manifest_file,
+                "resource_count": len(manifests),
+                "kind_summary": self._manifest_kind_summary(manifests),
+            },
+            "applied": not effective_dry_run,
+            "agent_response": apply_response,
+            "warnings": [],
+        }
 
     # --------------------
     # Manifest management
     # --------------------
     @handle_errors
-    def apply_manifest(self, manifest_file: str, namespace: str = None):
+    def apply_manifest(
+        self,
+        manifest_file: str,
+        namespace: str = None,
+        dry_run: bool | None = None,
+    ):
         namespace = namespace or self.default_namespace
         logger.info("Applying manifest %s to namespace %s", manifest_file, namespace)
-        output = self.kubectl.apply_manifest(manifest_path=manifest_file)
+        params = {"manifest_file": manifest_file, "namespace": namespace}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("apply_manifest", params)
+
+        output = self._agent_execute(
+            "applications.apply_manifest",
+            params,
+        )
         self.manifest_registry[manifest_file] = {
             "type": "manifest",
             "namespace": namespace,
@@ -53,39 +191,17 @@ class ApplicationManager:
         return output
 
     @handle_errors
-    def delete_manifest(self, manifest_file: str):
-        if manifest_file in self.manifest_registry:
-            logger.info("Deleting manifest %s", manifest_file)
-            output = self.kubectl.delete(manifest_file)
-            del self.manifest_registry[manifest_file]
-            return output
+    def delete_manifest(self, manifest_file: str, dry_run: bool | None = None):
+        params = {"manifest_file": manifest_file}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("delete_manifest", params)
 
-        logger.warning(
-            "Manifest %s not found in registry; deleting directly from manifest file",
-            manifest_file,
+        output = self._agent_execute(
+            "applications.delete_manifest",
+            params,
         )
-        return self.kubectl.delete(manifest_file)
-
-    # --------------------
-    # ConfigMap management
-    # --------------------
-    @handle_errors
-    def create_configmap(self, name, namespace=None, from_literal=None, from_file=None):
-        namespace = namespace or self.default_namespace
-        logger.info("Creating ConfigMap %s in namespace %s", name, namespace)
-        output = self.kubectl.create_configmap(
-            name=name,
-            namespace=namespace,
-            from_literal=from_literal,
-            from_file=from_file,
-        )
+        self.manifest_registry.pop(manifest_file, None)
         return output
-
-    @handle_errors
-    def delete_configmap(self, name, namespace=None):
-        namespace = namespace or self.default_namespace
-        logger.info("Deleting ConfigMap %s in namespace %s", name, namespace)
-        return self.kubectl.delete(name, namespace=namespace, resource_type="configmap")
 
     # --------------------
     # Registry secret management
@@ -100,286 +216,153 @@ class ApplicationManager:
         email: str = None,
         namespace: str = None,
         replace: bool = True,
+        dry_run: bool | None = None,
     ):
         """Create/update registry secret from credential fields."""
         namespace = namespace or self.default_namespace
-        if not registry or not username or not password:
-            raise ValueError("registry, username and password are required")
-
-        auth = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode(
-            "utf-8"
-        )
-        dockerconfig = {
-            "auths": {
-                registry: {
-                    "username": username,
-                    "password": password,
-                    "email": email,
-                    "auth": auth,
-                }
-            }
+        params = {
+            "name": name,
+            "registry": registry,
+            "username": username,
+            "password": password,
+            "email": email,
+            "namespace": namespace,
+            "replace": replace,
         }
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("create_registry_secret", params)
 
-        dockerconfig_payload = json.dumps(dockerconfig)
-        secret_data = {
-            ".dockerconfigjson": base64.b64encode(
-                dockerconfig_payload.encode("utf-8")
-            ).decode("utf-8")
-        }
-
-        secret_body = client.V1Secret(
-            metadata=client.V1ObjectMeta(name=name),
-            type="kubernetes.io/dockerconfigjson",
-            data=secret_data,
-        )
-
-        try:
-            self.v1.create_namespaced_secret(namespace=namespace, body=secret_body)
-            logger.info("Registry secret %s created in %s", name, namespace)
-            return f"Registry secret {name} created in {namespace}"
-        except ApiException as e:
-            if e.status == 409 and replace:
-                self.v1.replace_namespaced_secret(
-                    name=name, namespace=namespace, body=secret_body
-                )
-                logger.info("Registry secret %s updated in %s", name, namespace)
-                return f"Registry secret {name} updated in {namespace}"
-            raise
-
-    @handle_errors
-    def scale_microservice(self, deployment_name, replicas, namespace=None):
-        """Scale a microservice up or down."""
-        namespace = namespace or "default"
-        logger.info(
-            "Scaling microservice %s to %d replicas in namespace %s",
-            deployment_name,
-            replicas,
-            namespace,
-        )
-        patch = {"spec": {"replicas": replicas}}
-        return self.apps_v1.patch_namespaced_deployment(
-            name=deployment_name, namespace=namespace, body=patch
+        return self._agent_execute(
+            "applications.create_registry_secret",
+            params,
         )
 
     @handle_errors
-    def create_microservice(
-        self,
-        deployment_name,
-        image,
-        container_name="app",
-        replicas=1,
-        namespace=None,
-        labels=None,
-        env=None,
-        ports=None,
-        node_selector=None,
-        service_type="ClusterIP",
+    def create_pod(
+        self, msid, nodeid=None, namespace=None, dry_run: bool | None = None
     ):
-        """Create a new microservice deployment and optional service."""
+        """Create one pod instance for a microservice.
+
+        When nodeid is omitted, this scales the deployment by +1.
+        When nodeid is provided, this creates one additional pod from the
+        deployment template pinned to the requested node.
+        """
         namespace = namespace or self.default_namespace
-        labels = labels or {"app": deployment_name}
-        logger.info(
-            "Creating microservice %s in namespace %s",
-            deployment_name,
-            namespace,
+        params = {"msid": msid, "nodeid": nodeid, "namespace": namespace}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("create_pod", params)
+
+        return self._agent_execute(
+            "applications.create_pod",
+            params,
         )
-
-        env_vars = [
-            client.V1EnvVar(name=name, value=str(value))
-            for name, value in (env or {}).items()
-        ]
-
-        container_ports = []
-        service_ports = []
-        for port in ports or []:
-            if isinstance(port, int):
-                port_context = {"port": port, "targetPort": port}
-            else:
-                port_context = port
-
-            service_port = int(port_context.get("port", 0))
-            target_port = int(port_context.get("targetPort", service_port))
-            protocol = str(port_context.get("protocol", "TCP")).upper()
-            node_port = port_context.get("nodePort")
-
-            container_ports.append(
-                client.V1ContainerPort(
-                    container_port=target_port,
-                    protocol=protocol,
-                )
-            )
-
-            service_port_obj = client.V1ServicePort(
-                name=f"port-{service_port}",
-                port=service_port,
-                target_port=target_port,
-                protocol=protocol,
-            )
-            if node_port is not None:
-                service_port_obj.node_port = int(node_port)
-            service_ports.append(service_port_obj)
-
-        container = client.V1Container(
-            name=container_name,
-            image=image,
-            ports=container_ports or None,
-            env=env_vars or None,
-        )
-
-        pod_spec = client.V1PodSpec(
-            containers=[container],
-            node_selector=node_selector or None,
-        )
-
-        template = client.V1PodTemplateSpec(
-            metadata=client.V1ObjectMeta(labels=labels),
-            spec=pod_spec,
-        )
-
-        deployment_spec = client.V1DeploymentSpec(
-            replicas=replicas,
-            selector=client.V1LabelSelector(match_labels=labels),
-            template=template,
-        )
-
-        deployment = client.V1Deployment(
-            metadata=client.V1ObjectMeta(name=deployment_name, labels=labels),
-            spec=deployment_spec,
-        )
-
-        self.apps_v1.create_namespaced_deployment(namespace=namespace, body=deployment)
-        logger.info("Deployment %s created in %s", deployment_name, namespace)
-
-        result = [f"Deployment {deployment_name} created in {namespace}"]
-
-        if service_ports:
-            service_spec = client.V1ServiceSpec(
-                type=service_type,
-                selector=labels,
-                ports=service_ports,
-            )
-            service = client.V1Service(
-                metadata=client.V1ObjectMeta(name=deployment_name, labels=labels),
-                spec=service_spec,
-            )
-            self.v1.create_namespaced_service(namespace=namespace, body=service)
-            logger.info("Service %s created in %s", deployment_name, namespace)
-            result.append(f"Service {deployment_name} created in {namespace}")
-
-        return "\n".join(result)
 
     @handle_errors
-    def delete_microservice(self, app_label, namespace=None):
+    def scale_to(self, msid, count, namespace=None, dry_run: bool | None = None):
+        """Scale a microservice to an exact replica count."""
+        namespace = namespace or self.default_namespace
+        target_replicas = int(count)
+        if target_replicas < 0:
+            raise ValueError("count must be >= 0")
+
+        params = {"msid": msid, "count": target_replicas, "namespace": namespace}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("scale_to", params)
+
+        return self._agent_execute(
+            "applications.scale_to",
+            params,
+        )
+
+    @handle_errors
+    def delete_pod(self, msid, podid=None, namespace=None, dry_run: bool | None = None):
+        """Delete one pod instance for a microservice.
+
+        If podid is provided, the deployment must be scaled down by one replica
+        BEFORE that specific pod is deleted, otherwise Kubernetes will recreate
+        a replacement pod and the delete has no effect. This ordering must be
+        enforced by the swarm-agent handler for applications.delete_pod.
+
+        If podid is omitted, the microservice deployment is scaled down by one
+        replica and Kubernetes selects which pod to remove.
+        """
+        namespace = namespace or self.default_namespace
+        params = {"msid": msid, "podid": podid, "namespace": namespace}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("delete_pod", params)
+
+        return self._agent_execute(
+            "applications.delete_pod",
+            params,
+        )
+
+    @handle_errors
+    def migrate_pod(
+        self,
+        msid,
+        podid=None,
+        nodeid=None,
+        namespace=None,
+        dry_run: bool | None = None,
+    ):
+        """Move a pod for a microservice to a target node.
+
+        If podid is omitted, one matching pod is selected automatically.
+        """
+        namespace = namespace or self.default_namespace
+        params = {
+            "msid": msid,
+            "podid": podid,
+            "nodeid": nodeid,
+            "namespace": namespace,
+        }
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("migrate_pod", params)
+
+        return self._agent_execute(
+            "applications.migrate_pod",
+            params,
+        )
+
+    @handle_errors
+    def delete_microservice(
+        self,
+        app_label,
+        namespace=None,
+        dry_run: bool | None = None,
+    ):
         namespace = namespace or self.default_namespace
         logger.info(
             "Deleting microservice with app label %s in namespace %s",
             app_label,
             namespace,
         )
+        params = {"app_label": app_label, "namespace": namespace}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("delete_microservice", params)
 
-        if isinstance(app_label, str) and "=" in app_label:
-            label_selector = app_label
-        else:
-            label_selector = f"app={app_label}"
-
-        deleted_deployments = 0
-        deleted_services = 0
-
-        # Delete deployments by label selector
-        deployments = self.apps_v1.list_namespaced_deployment(
-            namespace, label_selector=label_selector
+        return self._agent_execute(
+            "applications.delete_microservice",
+            params,
         )
-        for dep in deployments.items:
-            logger.info("Deleting deployment %s", dep.metadata.name)
-            self.apps_v1.delete_namespaced_deployment(dep.metadata.name, namespace)
-            deleted_deployments += 1
-
-        # If no deployment matched and app_label looks like a deployment name, try deleting by name
-        if deleted_deployments == 0 and "=" not in app_label:
-            try:
-                self.apps_v1.delete_namespaced_deployment(app_label, namespace)
-                logger.info("Deleting deployment by name %s", app_label)
-                deleted_deployments += 1
-            except ApiException as exc:
-                if exc.status != 404:
-                    raise
-
-        # Delete services by label selector
-        services = self.v1.list_namespaced_service(
-            namespace, label_selector=label_selector
-        )
-        for svc in services.items:
-            logger.info("Deleting service %s", svc.metadata.name)
-            self.v1.delete_namespaced_service(svc.metadata.name, namespace)
-            deleted_services += 1
-
-        # If no service matched and app_label looks like a service name, try deleting by name
-        if deleted_services == 0 and "=" not in app_label:
-            try:
-                self.v1.delete_namespaced_service(app_label, namespace)
-                logger.info("Deleting service by name %s", app_label)
-                deleted_services += 1
-            except ApiException as exc:
-                if exc.status != 404:
-                    raise
-
-        return f"Deleted {deleted_deployments} deployments and {deleted_services} services for {app_label}"
 
     @handle_errors
-    def update_microservice_image(
-        self, deployment_name, container_name, new_image, namespace=None
+    def get_pod_node_mapping(
+        self,
+        namespace=None,
+        label_selector=None,
+        dry_run: bool | None = None,
     ):
-        """Update the image of a container in a deployment."""
-        namespace = namespace or self.default_namespace
-        logger.info(
-            "Updating image of container %s in deployment %s to %s",
-            container_name,
-            deployment_name,
-            new_image,
-        )
+        """Get pod-node mapping grouped by microservice label.
 
-        patch = {
-            "spec": {
-                "template": {
-                    "spec": {
-                        "containers": [{"name": container_name, "image": new_image}]
-                    }
-                }
-            }
-        }
-        return self.apps_v1.patch_namespaced_deployment(
-            name=deployment_name, namespace=namespace, body=patch
-        )
-
-    @handle_errors
-    def migrate_microservice_node(self, deployment_name, node_selector, namespace=None):
-        """Migrate microservice to nodes matching a new nodeSelector."""
+        Returns shape: {msid: {pod_name: node_name}}
+        """
         namespace = namespace or self.default_namespace
-        logger.info(
-            "Migrating microservice %s to nodeSelector %s",
-            deployment_name,
-            node_selector,
-        )
-        patch = {"spec": {"template": {"spec": {"nodeSelector": node_selector}}}}
-        return self.apps_v1.patch_namespaced_deployment(
-            name=deployment_name, namespace=namespace, body=patch
-        )
+        params = {"namespace": namespace, "label_selector": label_selector}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("get_pod_node_mapping", params)
 
-    @handle_errors
-    def get_pod_node_mapping(self, namespace=None, label_selector=None):
-        """Get mapping of pod names to node names for monitoring deployed microservices."""
-        namespace = namespace or self.default_namespace
-        pods = self.v1.list_namespaced_pod(
-            namespace=namespace, label_selector=label_selector
+        return self._agent_execute(
+            "applications.get_grouped_pod_node_mapping",
+            params,
         )
-        mapping = {}
-        for pod in pods.items:
-            pod_name = pod.metadata.name
-            node_name = pod.spec.node_name if pod.spec.node_name else "Not scheduled"
-            mapping[pod_name] = node_name
-        logger.info(
-            "Retrieved pod-node mapping for %d pods in namespace %s",
-            len(mapping),
-            namespace,
-        )
-        return mapping

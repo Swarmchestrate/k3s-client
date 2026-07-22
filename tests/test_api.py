@@ -1,203 +1,257 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+from k3s_client.api.applications import ApplicationManager
 from k3s_client.api.pods import PodManager
+from k3s_client.agent.client import SwarmAgentClient
 
 
-def test_pod_manager_initialization_sets_v1_attribute():
-    """PodManager should initialize without kubeconfig and have v1 attribute."""
-    with patch("k3s_client.api.pods.load_kubeconfig") as mock_load:
-        mock_load.return_value = None
-        pm = PodManager()
-        assert hasattr(pm, "v1"), "PodManager should have v1 attribute"
+def _mock_application_agent(mock_client):
+    agent = mock_client.return_value
+    agent.execute.side_effect = lambda action, params: {
+        "action": action,
+        "params": params,
+    }
+    return agent
 
 
-def test_list_pods_returns_list_of_pod_names():
-    """list_pods should return pod names from mocked CoreV1Api."""
-    with (
-        patch("k3s_client.api.pods.load_kubeconfig"),
-        patch("k3s_client.api.pods.client.CoreV1Api") as mock_api,
-    ):
-        mock_instance = mock_api.return_value
+def test_application_manager_requires_swarm_agent_mode():
+    with patch("k3s_client.api.applications.SwarmAgentClient"):
+        try:
+            ApplicationManager(execution_mode="direct", swarm_agent_url="http://a")
+            assert False, "direct mode should not be accepted"
+        except Exception as exc:
+            assert "swarm-agent" in str(exc)
 
-        # Mock two pods
-        pod1 = MagicMock()
-        pod1.metadata = MagicMock()
-        pod1.metadata.name = "pod1"
 
-        pod2 = MagicMock()
-        pod2.metadata = MagicMock()
-        pod2.metadata.name = "pod2"
+def test_application_manager_delegates_scale_to():
+    with patch("k3s_client.api.applications.SwarmAgentClient") as mock_client:
+        _mock_application_agent(mock_client)
+        app = ApplicationManager(swarm_agent_url="http://agent")
+        out = app.scale_to("ms1", 3, namespace="default")
+        assert out["action"] == "applications.scale_to"
+        assert out["params"]["msid"] == "ms1"
+        assert out["params"]["count"] == 3
 
-        mock_instance.list_namespaced_pod.return_value.items = [pod1, pod2]
 
-        pm = PodManager()
+def test_application_manager_delegates_pod_operations():
+    with patch("k3s_client.api.applications.SwarmAgentClient") as mock_client:
+        _mock_application_agent(mock_client)
+        app = ApplicationManager(swarm_agent_url="http://agent")
+
+        create_out = app.create_pod("ms1", nodeid="node2", namespace="default")
+        delete_out = app.delete_pod("ms1", podid="pod-a", namespace="default")
+        scale_out = app.scale_to("ms1", 5, namespace="default")
+        migrate_out = app.migrate_pod(
+            "ms1", podid="pod-a", nodeid="node3", namespace="default"
+        )
+
+        assert create_out["action"] == "applications.create_pod"
+        assert delete_out["action"] == "applications.delete_pod"
+        assert scale_out["action"] == "applications.scale_to"
+        assert migrate_out["action"] == "applications.migrate_pod"
+
+
+def test_application_manager_delegates_manifest_and_registry_operations():
+    with patch("k3s_client.api.applications.SwarmAgentClient") as mock_client:
+        _mock_application_agent(mock_client)
+        app = ApplicationManager(swarm_agent_url="http://agent")
+
+        apply_out = app.apply_manifest("m.yaml", namespace="default")
+        delete_out = app.delete_manifest("m.yaml")
+        secret_out = app.create_registry_secret(
+            name="s",
+            registry="r",
+            username="u",
+            password="p",
+            namespace="default",
+        )
+
+        assert apply_out["action"] == "applications.apply_manifest"
+        assert delete_out["action"] == "applications.delete_manifest"
+        assert secret_out["action"] == "applications.create_registry_secret"
+
+
+def test_application_manager_delegates_grouped_pod_node_mapping():
+    with patch("k3s_client.api.applications.SwarmAgentClient") as mock_client:
+        _mock_application_agent(mock_client)
+        app = ApplicationManager(swarm_agent_url="http://agent")
+
+        grouped = app.get_pod_node_mapping(namespace="default")
+
+        assert grouped["action"] == "applications.get_grouped_pod_node_mapping"
+
+
+def test_pod_manager_delegates_list_pods():
+    with patch("k3s_client.api.pods.SwarmAgentClient") as mock_client:
+        agent = mock_client.return_value
+        agent.execute.return_value = ["pod1", "pod2"]
+
+        pm = PodManager(swarm_agent_url="http://agent")
         pods = pm.list_pods(namespace="default")
+
         assert pods == ["pod1", "pod2"]
-
-
-def test_launch_pod_creates_pod_with_correct_parameters():
-    """launch_pod should call create_namespaced_pod with correct arguments."""
-    with (
-        patch("k3s_client.api.pods.load_kubeconfig"),
-        patch("k3s_client.api.pods.client.CoreV1Api") as mock_api,
-    ):
-        mock_instance = mock_api.return_value
-        mock_instance.create_namespaced_pod.return_value = None
-
-        pm = PodManager()
-        result = pm.launch_pod(
-            name="mypod",
-            image="nginx",
-            pod_labels={"app": "test"},
-            namespace="default",
-        )
-        mock_instance.create_namespaced_pod.assert_called_once()
-        assert "mypod" in result
-
-
-def test_launch_pod_on_specific_node():
-    """launch_pod should set nodeName when node_name is specified."""
-    with (
-        patch("k3s_client.api.pods.load_kubeconfig"),
-        patch("k3s_client.api.pods.client.CoreV1Api") as mock_api,
-    ):
-        mock_instance = mock_api.return_value
-        mock_instance.create_namespaced_pod.return_value = None
-
-        pm = PodManager()
-        result = pm.launch_pod(
-            name="mypod",
-            image="nginx",
-            node_name="node-1",
-            namespace="default",
-        )
-        mock_instance.create_namespaced_pod.assert_called_once()
-        # Check that node_name was set in the pod spec
-        call_args = mock_instance.create_namespaced_pod.call_args
-        pod_body = call_args[1]["body"]  # kwargs
-        assert pod_body.spec.node_name == "node-1"
-        assert "node-1" in result
-
-
-def test_destroy_pod_deletes_named_pod():
-    """destroy_pod should call delete_namespaced_pod for a single named pod."""
-    with (
-        patch("k3s_client.api.pods.load_kubeconfig"),
-        patch("k3s_client.api.pods.client.CoreV1Api") as mock_api,
-    ):
-        mock_instance = mock_api.return_value
-        mock_instance.delete_namespaced_pod.return_value = None
-
-        pm = PodManager()
-        result = pm.destroy_pod(pod_name="mypod", namespace="default")
-        mock_instance.delete_namespaced_pod.assert_called_once_with(
-            name="mypod", namespace="default"
-        )
-        assert "mypod" in result
-
-
-def test_destroy_pod_deletes_multiple_pods_by_label_selector():
-    """destroy_pod should delete all pods matching the given label selector."""
-    with (
-        patch("k3s_client.api.pods.load_kubeconfig"),
-        patch("k3s_client.api.pods.client.CoreV1Api") as mock_api,
-    ):
-        mock_instance = mock_api.return_value
-
-        # Mock pods returned by list_namespaced_pod
-        pod1 = MagicMock()
-        pod1.metadata = MagicMock()
-        pod1.metadata.name = "pod1"
-
-        pod2 = MagicMock()
-        pod2.metadata = MagicMock()
-        pod2.metadata.name = "pod2"
-
-        mock_instance.list_namespaced_pod.return_value.items = [pod1, pod2]
-        mock_instance.delete_namespaced_pod.return_value = None
-
-        pm = PodManager()
-        result = pm.destroy_pod(pod_label="app=test", namespace="default")
-        # delete_namespaced_pod should be called twice
-        assert mock_instance.delete_namespaced_pod.call_count == 2
-        assert "app=test" in result
-
-
-def test_create_registry_secret_for_application():
-    """create_registry_secret should call create_namespaced_secret via PodManager API."""
-    from k3s_client.api.applications import ApplicationManager
-
-    with (
-        patch("k3s_client.api.applications.load_kubeconfig"),
-        patch("k3s_client.api.applications.client.CoreV1Api") as mock_api,
-    ):
-        mock_instance = mock_api.return_value
-        mock_instance.create_namespaced_secret.return_value = None
-
-        app = ApplicationManager()
-        result = app.create_registry_secret(
-            name="my-secret",
-            namespace="default",
-            registry="my-registry.local",
-            username="user",
-            password="pass",
-            email="test@example.com",
-            replace=False,
+        agent.execute.assert_called_once_with(
+            action="pods.list_pods",
+            params={"namespace": "default", "label_selector": None},
         )
 
-        mock_instance.create_namespaced_secret.assert_called_once()
-        assert "created" in result
+
+def test_swarm_agent_client_defaults_to_local_base_url():
+    client = SwarmAgentClient()
+    assert client.base_url == "http://127.0.0.1:8080"
+    assert client.url == "http://127.0.0.1:8080/v1/actions"
 
 
-def test_application_get_pod_node_mapping():
-    """ApplicationManager.get_pod_node_mapping should return pod to node mapping."""
-    from k3s_client.api.applications import ApplicationManager
-
+def test_apply_tosca_dry_run_generates_manifest_and_skips_apply(tmp_path):
     with (
-        patch("k3s_client.api.applications.load_kubeconfig"),
-        patch("k3s_client.api.applications.client.CoreV1Api") as mock_api,
+        patch("k3s_client.api.applications.SwarmAgentClient") as mock_client,
+        patch("k3s_client.api.applications.get_kubernetes_manifest") as mock_manifest,
     ):
-        mock_instance = mock_api.return_value
+        agent = _mock_application_agent(mock_client)
+        mock_manifest.return_value = [
+            {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "a"}},
+            {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "a"}},
+        ]
+        app = ApplicationManager(swarm_agent_url="http://agent")
 
-        # Mock pods with node assignments
-        pod1 = MagicMock()
-        pod1.metadata = MagicMock()
-        pod1.metadata.name = "pod1"
-        pod1.spec = MagicMock()
-        pod1.spec.node_name = "node-1"
+        out_file = tmp_path / "generated.yaml"
+        result = app.apply_tosca(
+            tosca_content="node_templates: {}",
+            dry_run=True,
+            output_manifest_file=str(out_file),
+        )
 
-        pod2 = MagicMock()
-        pod2.metadata = MagicMock()
-        pod2.metadata.name = "pod2"
-        pod2.spec = MagicMock()
-        pod2.spec.node_name = "node-2"
+        assert result["ok"] is True
+        assert result["mode"] == "dry-run"
+        assert result["applied"] is False
+        assert result["agent_response"] is None
+        assert result["manifest"]["resource_count"] == 2
+        assert result["manifest"]["kind_summary"]["Deployment"] == 1
+        assert result["manifest"]["kind_summary"]["Service"] == 1
+        assert out_file.exists()
+        assert "kind: Deployment" in out_file.read_text(encoding="utf-8")
+        assert "kind: Service" in out_file.read_text(encoding="utf-8")
+        agent.execute.assert_not_called()
 
-        mock_instance.list_namespaced_pod.return_value.items = [pod1, pod2]
 
-        app = ApplicationManager()
-        mapping = app.get_pod_node_mapping(namespace="default")
-        assert mapping == {"pod1": "node-1", "pod2": "node-2"}
-    """get_pod_node_mapping should return pod to node mapping."""
+def test_apply_tosca_apply_calls_agent_and_returns_standardized_output(tmp_path):
     with (
-        patch("k3s_client.api.pods.load_kubeconfig"),
-        patch("k3s_client.api.pods.client.CoreV1Api") as mock_api,
+        patch("k3s_client.api.applications.SwarmAgentClient") as mock_client,
+        patch("k3s_client.api.applications.get_kubernetes_manifest") as mock_manifest,
     ):
-        mock_instance = mock_api.return_value
+        _mock_application_agent(mock_client)
+        mock_manifest.return_value = [
+            {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "a"}}
+        ]
+        app = ApplicationManager(swarm_agent_url="http://agent")
 
-        # Mock pods with node assignments
-        pod1 = MagicMock()
-        pod1.metadata = MagicMock()
-        pod1.metadata.name = "pod1"
-        pod1.spec = MagicMock()
-        pod1.spec.node_name = "node-1"
+        out_file = tmp_path / "generated.yaml"
+        result = app.apply_tosca(
+            tosca_content="node_templates: {}",
+            output_manifest_file=str(out_file),
+        )
 
-        pod2 = MagicMock()
-        pod2.metadata = MagicMock()
-        pod2.metadata.name = "pod2"
-        pod2.spec = MagicMock()
-        pod2.spec.node_name = "node-2"
+        assert result["ok"] is True
+        assert result["mode"] == "apply"
+        assert result["applied"] is True
+        assert result["namespace"] == "default"
+        assert result["manifest"]["resource_count"] == 1
+        assert result["manifest"]["kind_summary"]["Deployment"] == 1
+        assert result["agent_response"]["action"] == "applications.apply_manifest"
+        assert result["agent_response"]["params"]["namespace"] == "default"
+        assert result["agent_response"]["params"]["manifest_file"] == str(out_file)
 
-        mock_instance.list_namespaced_pod.return_value.items = [pod1, pod2]
 
-        pm = PodManager()
-        mapping = pm.get_pod_node_mapping(namespace="default")
-        assert mapping == {"pod1": "node-1", "pod2": "node-2"}
+def test_apply_tosca_respects_dry_run_by_default_and_allows_override(tmp_path):
+    with (
+        patch("k3s_client.api.applications.SwarmAgentClient") as mock_client,
+        patch("k3s_client.api.applications.get_kubernetes_manifest") as mock_manifest,
+    ):
+        agent = _mock_application_agent(mock_client)
+        mock_manifest.return_value = [
+            {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "a"}}
+        ]
+        app = ApplicationManager(
+            swarm_agent_url="http://agent", dry_run_by_default=True
+        )
+
+        out_file = tmp_path / "generated.yaml"
+        result_default = app.apply_tosca(
+            tosca_content="node_templates: {}",
+            output_manifest_file=str(out_file),
+        )
+        assert result_default["mode"] == "dry-run"
+        assert result_default["applied"] is False
+        agent.execute.assert_not_called()
+
+        result_override = app.apply_tosca(
+            tosca_content="node_templates: {}",
+            dry_run=False,
+            output_manifest_file=str(out_file),
+        )
+        assert result_override["mode"] == "apply"
+        assert result_override["applied"] is True
+        assert (
+            result_override["agent_response"]["action"] == "applications.apply_manifest"
+        )
+
+
+def test_application_manager_dry_run_supported_across_methods():
+    with patch("k3s_client.api.applications.SwarmAgentClient") as mock_client:
+        agent = _mock_application_agent(mock_client)
+        app = ApplicationManager(swarm_agent_url="http://agent")
+
+        responses = [
+            app.apply_manifest("m.yaml", namespace="default", dry_run=True),
+            app.delete_manifest("m.yaml", dry_run=True),
+            app.create_registry_secret(
+                name="s",
+                registry="r",
+                username="u",
+                password="p",
+                namespace="default",
+                dry_run=True,
+            ),
+            app.create_pod("ms1", nodeid="n1", namespace="default", dry_run=True),
+            app.scale_to("ms1", 2, namespace="default", dry_run=True),
+            app.delete_pod("ms1", podid="pod-a", namespace="default", dry_run=True),
+            app.migrate_pod(
+                "ms1",
+                podid="pod-a",
+                nodeid="n2",
+                namespace="default",
+                dry_run=True,
+            ),
+            app.delete_microservice("app=ms1", namespace="default", dry_run=True),
+            app.get_pod_node_mapping(
+                namespace="default",
+                label_selector="app=ms1",
+                dry_run=True,
+            ),
+        ]
+
+        for response in responses:
+            assert response["ok"] is True
+            assert response["mode"] == "dry-run"
+            assert response["executed"] is False
+            assert "operation" in response
+            assert "params" in response
+
+        agent.execute.assert_not_called()
+
+
+def test_application_manager_dry_run_by_default_applies_to_non_tosca_methods():
+    with patch("k3s_client.api.applications.SwarmAgentClient") as mock_client:
+        agent = _mock_application_agent(mock_client)
+        app = ApplicationManager(
+            swarm_agent_url="http://agent",
+            dry_run_by_default=True,
+        )
+
+        result = app.create_pod("ms1", namespace="default")
+        assert result["mode"] == "dry-run"
+        assert result["operation"] == "create_pod"
+
+        override = app.create_pod("ms1", namespace="default", dry_run=False)
+        assert override["action"] == "applications.create_pod"
+        agent.execute.assert_called_once()
