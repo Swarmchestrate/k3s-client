@@ -3,7 +3,7 @@ from ruamel.yaml import YAML
 from io import StringIO
 from pathlib import Path
 
-TOSCA_FILE = "examples/Bookinfo.yaml"  # path relative to example folder
+TOSCA_FILE = "examples/tosca-file.yaml"  # path relative to example folder
 OUTPUT_FILE = "generated-manifests.yaml"
 IMAGE_PULL_SECRET = ""
 
