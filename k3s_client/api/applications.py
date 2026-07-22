@@ -63,6 +63,19 @@ class ApplicationManager:
     def _agent_execute(self, action, params):
         return self.agent.execute(action=action, params=params)
 
+    def _effective_dry_run(self, dry_run: bool | None) -> bool:
+        return self.dry_run_by_default if dry_run is None else bool(dry_run)
+
+    @staticmethod
+    def _dry_run_response(operation: str, params: dict):
+        return {
+            "ok": True,
+            "operation": operation,
+            "mode": "dry-run",
+            "executed": False,
+            "params": params,
+        }
+
     @staticmethod
     def _write_manifest_documents(manifests, output_path: str) -> str:
         path = Path(output_path)
@@ -103,9 +116,7 @@ class ApplicationManager:
         Returns a standardized response object with generation/apply metadata.
         """
         effective_namespace = namespace or self.default_namespace
-        effective_dry_run = (
-            self.dry_run_by_default if dry_run is None else bool(dry_run)
-        )
+        effective_dry_run = self._effective_dry_run(dry_run)
 
         manifests = get_kubernetes_manifest(
             tosca_file=tosca_file,
@@ -129,6 +140,7 @@ class ApplicationManager:
             apply_response = self.apply_manifest(
                 manifest_file=manifest_file,
                 namespace=effective_namespace,
+                dry_run=False,
             )
 
         return {
@@ -156,12 +168,21 @@ class ApplicationManager:
     # Manifest management
     # --------------------
     @handle_errors
-    def apply_manifest(self, manifest_file: str, namespace: str = None):
+    def apply_manifest(
+        self,
+        manifest_file: str,
+        namespace: str = None,
+        dry_run: bool | None = None,
+    ):
         namespace = namespace or self.default_namespace
         logger.info("Applying manifest %s to namespace %s", manifest_file, namespace)
+        params = {"manifest_file": manifest_file, "namespace": namespace}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("apply_manifest", params)
+
         output = self._agent_execute(
             "applications.apply_manifest",
-            {"manifest_file": manifest_file, "namespace": namespace},
+            params,
         )
         self.manifest_registry[manifest_file] = {
             "type": "manifest",
@@ -170,10 +191,14 @@ class ApplicationManager:
         return output
 
     @handle_errors
-    def delete_manifest(self, manifest_file: str):
+    def delete_manifest(self, manifest_file: str, dry_run: bool | None = None):
+        params = {"manifest_file": manifest_file}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("delete_manifest", params)
+
         output = self._agent_execute(
             "applications.delete_manifest",
-            {"manifest_file": manifest_file},
+            params,
         )
         self.manifest_registry.pop(manifest_file, None)
         return output
@@ -191,24 +216,29 @@ class ApplicationManager:
         email: str = None,
         namespace: str = None,
         replace: bool = True,
+        dry_run: bool | None = None,
     ):
         """Create/update registry secret from credential fields."""
         namespace = namespace or self.default_namespace
+        params = {
+            "name": name,
+            "registry": registry,
+            "username": username,
+            "password": password,
+            "email": email,
+            "namespace": namespace,
+            "replace": replace,
+        }
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("create_registry_secret", params)
+
         return self._agent_execute(
             "applications.create_registry_secret",
-            {
-                "name": name,
-                "registry": registry,
-                "username": username,
-                "password": password,
-                "email": email,
-                "namespace": namespace,
-                "replace": replace,
-            },
+            params,
         )
 
     @handle_errors
-    def create_pod(self, msid, nodeid=None, namespace=None):
+    def create_pod(self, msid, nodeid=None, namespace=None, dry_run: bool | None = None):
         """Create one pod instance for a microservice.
 
         When nodeid is omitted, this scales the deployment by +1.
@@ -216,79 +246,116 @@ class ApplicationManager:
         deployment template pinned to the requested node.
         """
         namespace = namespace or self.default_namespace
+        params = {"msid": msid, "nodeid": nodeid, "namespace": namespace}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("create_pod", params)
 
         return self._agent_execute(
             "applications.create_pod",
-            {"msid": msid, "nodeid": nodeid, "namespace": namespace},
+            params,
         )
 
     @handle_errors
-    def scale_to(self, msid, count, namespace=None):
+    def scale_to(self, msid, count, namespace=None, dry_run: bool | None = None):
         """Scale a microservice to an exact replica count."""
         namespace = namespace or self.default_namespace
         target_replicas = int(count)
         if target_replicas < 0:
             raise ValueError("count must be >= 0")
 
+        params = {"msid": msid, "count": target_replicas, "namespace": namespace}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("scale_to", params)
+
         return self._agent_execute(
             "applications.scale_to",
-            {"msid": msid, "count": target_replicas, "namespace": namespace},
+            params,
         )
 
     @handle_errors
-    def delete_pod(self, msid, podid=None, namespace=None):
+    def delete_pod(self, msid, podid=None, namespace=None, dry_run: bool | None = None):
         """Delete one pod instance for a microservice.
 
         If podid is provided, that specific pod is deleted.
         Otherwise, the microservice deployment is scaled down by one replica.
         """
         namespace = namespace or self.default_namespace
+        params = {"msid": msid, "podid": podid, "namespace": namespace}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("delete_pod", params)
 
         return self._agent_execute(
             "applications.delete_pod",
-            {"msid": msid, "podid": podid, "namespace": namespace},
+            params,
         )
 
     @handle_errors
-    def migrate_pod(self, msid, podid=None, nodeid=None, namespace=None):
+    def migrate_pod(
+        self,
+        msid,
+        podid=None,
+        nodeid=None,
+        namespace=None,
+        dry_run: bool | None = None,
+    ):
         """Move a pod for a microservice to a target node.
 
         If podid is omitted, one matching pod is selected automatically.
         """
         namespace = namespace or self.default_namespace
+        params = {
+            "msid": msid,
+            "podid": podid,
+            "nodeid": nodeid,
+            "namespace": namespace,
+        }
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("migrate_pod", params)
 
         return self._agent_execute(
             "applications.migrate_pod",
-            {
-                "msid": msid,
-                "podid": podid,
-                "nodeid": nodeid,
-                "namespace": namespace,
-            },
+            params,
         )
 
     @handle_errors
-    def delete_microservice(self, app_label, namespace=None):
+    def delete_microservice(
+        self,
+        app_label,
+        namespace=None,
+        dry_run: bool | None = None,
+    ):
         namespace = namespace or self.default_namespace
         logger.info(
             "Deleting microservice with app label %s in namespace %s",
             app_label,
             namespace,
         )
+        params = {"app_label": app_label, "namespace": namespace}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("delete_microservice", params)
 
         return self._agent_execute(
             "applications.delete_microservice",
-            {"app_label": app_label, "namespace": namespace},
+            params,
         )
 
     @handle_errors
-    def get_pod_node_mapping(self, namespace=None, label_selector=None):
+    def get_pod_node_mapping(
+        self,
+        namespace=None,
+        label_selector=None,
+        dry_run: bool | None = None,
+    ):
         """Get pod-node mapping grouped by microservice label.
 
         Returns shape: {msid: {pod_name: node_name}}
         """
         namespace = namespace or self.default_namespace
+        params = {"namespace": namespace, "label_selector": label_selector}
+        if self._effective_dry_run(dry_run):
+            return self._dry_run_response("get_pod_node_mapping", params)
+
         return self._agent_execute(
             "applications.get_grouped_pod_node_mapping",
-            {"namespace": namespace, "label_selector": label_selector},
+            params,
         )
