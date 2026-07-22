@@ -77,6 +77,7 @@ Deployment model:
 3. Remove applications using `delete_manifest`.
 
 For pod-level methods, `msid` should match the deployed microservice/deployment name from the applied manifest.
+
 For one-call TOSCA generate/apply workflow, see [examples/apply_tosca_example.py](examples/apply_tosca_example.py).
 
 For pod-to-node mapping usage, see [examples/pod_node_mapping_example.py](examples/pod_node_mapping_example.py).
