@@ -238,7 +238,9 @@ class ApplicationManager:
         )
 
     @handle_errors
-    def create_pod(self, msid, nodeid=None, namespace=None, dry_run: bool | None = None):
+    def create_pod(
+        self, msid, nodeid=None, namespace=None, dry_run: bool | None = None
+    ):
         """Create one pod instance for a microservice.
 
         When nodeid is omitted, this scales the deployment by +1.
@@ -276,8 +278,13 @@ class ApplicationManager:
     def delete_pod(self, msid, podid=None, namespace=None, dry_run: bool | None = None):
         """Delete one pod instance for a microservice.
 
-        If podid is provided, that specific pod is deleted.
-        Otherwise, the microservice deployment is scaled down by one replica.
+        If podid is provided, the deployment must be scaled down by one replica
+        BEFORE that specific pod is deleted, otherwise Kubernetes will recreate
+        a replacement pod and the delete has no effect. This ordering must be
+        enforced by the swarm-agent handler for applications.delete_pod.
+
+        If podid is omitted, the microservice deployment is scaled down by one
+        replica and Kubernetes selects which pod to remove.
         """
         namespace = namespace or self.default_namespace
         params = {"msid": msid, "podid": podid, "namespace": namespace}
