@@ -194,3 +194,64 @@ def test_apply_tosca_respects_dry_run_by_default_and_allows_override(tmp_path):
         assert (
             result_override["agent_response"]["action"] == "applications.apply_manifest"
         )
+
+
+def test_application_manager_dry_run_supported_across_methods():
+    with patch("k3s_client.api.applications.SwarmAgentClient") as mock_client:
+        agent = _mock_application_agent(mock_client)
+        app = ApplicationManager(swarm_agent_url="http://agent")
+
+        responses = [
+            app.apply_manifest("m.yaml", namespace="default", dry_run=True),
+            app.delete_manifest("m.yaml", dry_run=True),
+            app.create_registry_secret(
+                name="s",
+                registry="r",
+                username="u",
+                password="p",
+                namespace="default",
+                dry_run=True,
+            ),
+            app.create_pod("ms1", nodeid="n1", namespace="default", dry_run=True),
+            app.scale_to("ms1", 2, namespace="default", dry_run=True),
+            app.delete_pod("ms1", podid="pod-a", namespace="default", dry_run=True),
+            app.migrate_pod(
+                "ms1",
+                podid="pod-a",
+                nodeid="n2",
+                namespace="default",
+                dry_run=True,
+            ),
+            app.delete_microservice("app=ms1", namespace="default", dry_run=True),
+            app.get_pod_node_mapping(
+                namespace="default",
+                label_selector="app=ms1",
+                dry_run=True,
+            ),
+        ]
+
+        for response in responses:
+            assert response["ok"] is True
+            assert response["mode"] == "dry-run"
+            assert response["executed"] is False
+            assert "operation" in response
+            assert "params" in response
+
+        agent.execute.assert_not_called()
+
+
+def test_application_manager_dry_run_by_default_applies_to_non_tosca_methods():
+    with patch("k3s_client.api.applications.SwarmAgentClient") as mock_client:
+        agent = _mock_application_agent(mock_client)
+        app = ApplicationManager(
+            swarm_agent_url="http://agent",
+            dry_run_by_default=True,
+        )
+
+        result = app.create_pod("ms1", namespace="default")
+        assert result["mode"] == "dry-run"
+        assert result["operation"] == "create_pod"
+
+        override = app.create_pod("ms1", namespace="default", dry_run=False)
+        assert override["action"] == "applications.create_pod"
+        agent.execute.assert_called_once()
