@@ -85,12 +85,12 @@ class ApplicationManager:
     def apply_tosca(
         self,
         *,
-        tosca_file: str = None,
-        tosca_content: str = None,
-        image_pull_secret: str = None,
-        acme_email: str = None,
+        tosca_file: str | None = None,
+        tosca_content: str | None = None,
+        image_pull_secret: str | None = None,
+        acme_email: str | None = None,
         dry_run: bool | None = None,
-        output_manifest_file: str = None,
+        output_manifest_file: str | None = None,
     ):
         """Generate manifests from TOSCA and optionally apply them."""
         effective_dry_run = self._effective_dry_run(dry_run)
@@ -179,7 +179,7 @@ class ApplicationManager:
         registry: str,
         username: str,
         password: str,
-        email: str = None,
+        email: str | None = None,
         replace: bool = True,
         dry_run: bool | None = None,
     ):

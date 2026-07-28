@@ -140,9 +140,11 @@ def test_get_kubernetes_manifest_propagates_sardou_validation_error():
         def get_affinity(self):
             raise ValueError("validation failed")
 
-    with patch("k3s_client.utils.manifest.Sardou", FailingSardou):
-        with pytest.raises(ValueError, match="validation failed"):
-            manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+    with (
+      patch("k3s_client.utils.manifest.Sardou", FailingSardou),
+      pytest.raises(ValueError, match="validation failed"),
+    ):
+      manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
 
 
 def _deployment(manifests):
@@ -187,7 +189,7 @@ node_templates:
 
 
 def test_parse_file_mode():
-    assert manifest_utils._parse_file_mode("0444") == 0o444 == 292
+    assert manifest_utils._parse_file_mode("0444") == 0o444
     assert manifest_utils._parse_file_mode("644") == 0o644
     assert manifest_utils._parse_file_mode(None) is None
     assert manifest_utils._parse_file_mode("not-a-mode") is None

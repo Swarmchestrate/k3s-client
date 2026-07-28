@@ -1,7 +1,5 @@
 import logging
 import sys
-from typing import Optional
-
 
 # re-export the standard levels so callers don't need to import logging
 DEBUG = logging.DEBUG
@@ -12,7 +10,7 @@ CRITICAL = logging.CRITICAL
 
 
 def configure_logging(
-    level: int = logging.INFO, log_file: Optional[str] = None
+    level: int = logging.INFO, log_file: str | None = None
 ) -> None:
     """Configure or reconfigure logging for the cluster builder.
 

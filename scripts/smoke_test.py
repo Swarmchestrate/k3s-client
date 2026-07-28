@@ -84,7 +84,7 @@ def _validate_result_payloads(results: dict[str, object]) -> None:
             # Read-only path still returns a dry-run envelope from ApplicationManager.
             pass
         if not isinstance(payload, dict):
-            raise ValueError(f"Dry-run response for {operation} is not a mapping")
+            raise TypeError(f"Dry-run response for {operation} is not a mapping")
         if payload.get("mode") != "dry-run":
             raise ValueError(f"Dry-run response for {operation} missing mode=dry-run")
         if payload.get("executed") is not False:

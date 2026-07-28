@@ -1,6 +1,7 @@
+import logging
+
 from kubernetes import config
 from kubernetes.config.config_exception import ConfigException
-import logging
 
 logger = logging.getLogger(__name__)
 

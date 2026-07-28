@@ -2,7 +2,6 @@ import base64
 import json
 import logging
 import os
-from typing import Optional, List
 
 from kubernetes import client, config, dynamic
 from kubernetes.client.rest import ApiException
@@ -20,32 +19,34 @@ class Kubectl:
 
     def __init__(
         self,
-        kubeconfig: Optional[str] = None,
+        kubeconfig: str | None = None,
     ):
         self.kubeconfig = kubeconfig
 
         try:
+            config.load_incluster_config()
+            logger.debug("Loaded in-cluster Kubernetes config")
+        except ConfigException:
             try:
-                config.load_incluster_config()
-                logger.debug("Loaded in-cluster Kubernetes config")
-            except ConfigException:
                 config.load_kube_config(self.kubeconfig)
                 logger.debug(
                     "Loaded kubeconfig from %s", self.kubeconfig or "default path"
                 )
+            except ConfigException as exc:
+                raise K3sClientError(
+                    f"Failed to load Kubernetes config: {exc}"
+                ) from exc
 
-            self.api_client = client.ApiClient()
-            self.dynamic_client = dynamic.DynamicClient(self.api_client)
-            self.apps_v1 = client.AppsV1Api(self.api_client)
-        except Exception as e:
-            raise K3sClientError(f"Failed to initialize Kubernetes client: {e}")
+        self.api_client = client.ApiClient()
+        self.dynamic_client = dynamic.DynamicClient(self.api_client)
+        self.apps_v1 = client.AppsV1Api(self.api_client)
 
     @staticmethod
     def _default_namespace() -> str:
         return "default"
 
     @staticmethod
-    def _dry_run_arg(dry_run: bool) -> Optional[str]:
+    def _dry_run_arg(dry_run: bool) -> str | None:
         return "All" if dry_run else None
 
     @staticmethod
@@ -97,7 +98,7 @@ class Kubectl:
         api_version, kind = mapping[key]
         return self._resource_for_gvk(api_version, kind)
 
-    def _namespace_for(self, resource, metadata: dict | None = None) -> Optional[str]:
+    def _namespace_for(self, resource, metadata: dict | None = None) -> str | None:
         if not getattr(resource, "namespaced", False):
             return None
         namespace = (metadata or {}).get("namespace")
@@ -313,8 +314,8 @@ class Kubectl:
     def create_configmap(
         self,
         name: str,
-        from_literal: Optional[List[str]] = None,
-        from_file: Optional[List[str]] = None,
+        from_literal: list[str] | None = None,
+        from_file: list[str] | None = None,
     ) -> str:
         """Create or update a configmap from literals or files."""
         data = {}
@@ -351,11 +352,11 @@ class Kubectl:
         registry: str,
         username: str,
         password: str,
-        email: Optional[str] = None,
+        email: str | None = None,
         dry_run: bool = False,
     ) -> str:
         """Create or update a Docker registry secret idempotently."""
-        auth_value = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode(
+        auth_value = base64.b64encode(f"{username}:{password}".encode()).decode(
             "utf-8"
         )
         auth_entry = {
@@ -424,7 +425,7 @@ class Kubectl:
     def delete(
         self,
         name_or_manifest: str,
-        resource_type: Optional[str] = None,
+        resource_type: str | None = None,
         dry_run: bool = False,
     ) -> str:
         """
@@ -461,7 +462,7 @@ class Kubectl:
     def delete_by_label(
         self,
         label_selector: str,
-        resource_types: Optional[List[str]] = None,
+        resource_types: list[str] | None = None,
         dry_run: bool = False,
     ) -> str:
         """Delete resources matching a label selector."""
@@ -521,8 +522,8 @@ class Kubectl:
     def get(
         self,
         resource_type: str,
-        name: Optional[str] = None,
-        label_selector: Optional[str] = None,
+        name: str | None = None,
+        label_selector: str | None = None,
         output: str = "yaml",
     ) -> str:
         """Get Kubernetes resources in YAML/JSON."""

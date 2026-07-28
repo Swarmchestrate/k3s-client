@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from io import StringIO
 from tempfile import NamedTemporaryFile
-from typing import Any, Optional
+from typing import Any
 
 from ruamel.yaml import YAML
 
@@ -42,11 +42,11 @@ class OptimizerRuntimeClient:
     def _load_document(self, yaml_text: str, *, kind: str) -> dict[str, Any]:
         document = yaml.load(StringIO(yaml_text))
         if not isinstance(document, dict):
-            raise ValueError(f"Expected a {kind} document from kubectl")
+            raise TypeError(f"Expected a {kind} document from kubectl")
         return document
 
     @staticmethod
-    def _owner_deployment_name(pod: dict[str, Any]) -> Optional[str]:
+    def _owner_deployment_name(pod: dict[str, Any]) -> str | None:
         metadata = pod.get("metadata") or {}
         owner_refs = metadata.get("ownerReferences") or []
         for owner in owner_refs:

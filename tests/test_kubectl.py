@@ -273,12 +273,14 @@ def test_dry_run_api_exception_propagates_as_k3s_client_error(kubectl_and_mocks)
     resource.namespaced = True
     resource.patch.side_effect = ApiException(status=403, reason="forbidden")
 
-    with patch.object(kubectl, "_resource_for_type", return_value=resource):
-        with pytest.raises(K3sClientError):
-            kubectl.annotate(
-                "pod",
-                "pod-a",
-                "controller.kubernetes.io/pod-deletion-cost",
-                "-999",
-                dry_run=True,
-            )
+    with (
+        patch.object(kubectl, "_resource_for_type", return_value=resource),
+        pytest.raises(K3sClientError),
+    ):
+        kubectl.annotate(
+            "pod",
+            "pod-a",
+            "controller.kubernetes.io/pod-deletion-cost",
+            "-999",
+            dry_run=True,
+        )
