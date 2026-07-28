@@ -2,10 +2,6 @@ from typing import Any
 
 from k3s_client.api.applications import ApplicationManager
 
-NAMESPACE = "default"
-SWARM_AGENT_URL = "http://swarm-agent.default.svc.cluster.local:8080"
-
-
 # Optimizer emits an ordered action list. Keep dependent actions in sequence.
 # Supported actions in this example: create_pod, delete_pod, scale_to.
 ACTION_PLAN = [
@@ -18,11 +14,9 @@ ACTION_PLAN = [
 
 def execute_optimizer_actions(
     actions: list[dict[str, Any]],
-    namespace: str = NAMESPACE,
-    swarm_agent_url: str | None = None,
 ) -> list[dict[str, Any]]:
     """Execute optimizer-driven runtime pod actions in order."""
-    manager = ApplicationManager(swarm_agent_url=swarm_agent_url)
+    manager = ApplicationManager()
     results: list[dict[str, Any]] = []
 
     for index, item in enumerate(actions):
@@ -33,19 +27,16 @@ def execute_optimizer_actions(
             response = manager.create_pod(
                 msid=msid,
                 nodeid=item.get("nodeid"),
-                namespace=namespace,
             )
         elif action == "delete_pod":
             response = manager.delete_pod(
                 msid=msid,
                 podid=item.get("podid"),
-                namespace=namespace,
             )
         elif action == "scale_to":
             response = manager.scale_to(
                 msid=msid,
                 count=int(item.get("count", 0)),
-                namespace=namespace,
             )
         else:
             raise ValueError(
@@ -68,8 +59,4 @@ def execute_optimizer_actions(
 
 
 if __name__ == "__main__":
-    execute_optimizer_actions(
-        actions=ACTION_PLAN,
-        namespace=NAMESPACE,
-        swarm_agent_url=SWARM_AGENT_URL,
-    )
+    execute_optimizer_actions(actions=ACTION_PLAN)
