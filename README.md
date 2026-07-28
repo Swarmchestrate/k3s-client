@@ -110,7 +110,17 @@ Provide exactly one input source: `tosca_file` or `tosca_content`.
 
 ## Examples
 
-See the `examples/` folder for end-to-end usage scripts.
+Use these scripts from the `examples/` folder for end-to-end usage:
+
+| Example script | Description |
+|----------------|----------------------|
+| `manifest_generator_example.py` | Generate Kubernetes manifests from a TOSCA input |
+| `manifest_apply_example.py` | Apply an existing manifest file |
+| `manifest_delete_example.py` | Delete resources from a manifest file |
+| `apply_tosca_example.py` | Generate and apply from TOSCA in one flow |
+| `scale_microservice_example.py` | Scale a microservice deployment |
+| `pod_runtime_operations_example.py` | Create, delete, and migrate runtime pods |
+| `registry_secret_example.py` | Create/update registry pull secrets |
 
 ---
 
