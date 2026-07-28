@@ -356,9 +356,7 @@ class Kubectl:
         dry_run: bool = False,
     ) -> str:
         """Create or update a Docker registry secret idempotently."""
-        auth_value = base64.b64encode(f"{username}:{password}".encode()).decode(
-            "utf-8"
-        )
+        auth_value = base64.b64encode(f"{username}:{password}".encode()).decode("utf-8")
         auth_entry = {
             "username": username,
             "password": password,

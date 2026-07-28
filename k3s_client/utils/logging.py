@@ -9,9 +9,7 @@ ERROR = logging.ERROR
 CRITICAL = logging.CRITICAL
 
 
-def configure_logging(
-    level: int = logging.INFO, log_file: str | None = None
-) -> None:
+def configure_logging(level: int = logging.INFO, log_file: str | None = None) -> None:
     """Configure or reconfigure logging for the cluster builder.
 
     Args:

@@ -141,10 +141,10 @@ def test_get_kubernetes_manifest_propagates_sardou_validation_error():
             raise ValueError("validation failed")
 
     with (
-      patch("k3s_client.utils.manifest.Sardou", FailingSardou),
-      pytest.raises(ValueError, match="validation failed"),
+        patch("k3s_client.utils.manifest.Sardou", FailingSardou),
+        pytest.raises(ValueError, match="validation failed"),
     ):
-      manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+        manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
 
 
 def _deployment(manifests):
