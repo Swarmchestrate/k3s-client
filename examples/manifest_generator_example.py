@@ -1,7 +1,9 @@
-from k3s_client.utils.manifest import get_kubernetes_manifest
-from ruamel.yaml import YAML
 from io import StringIO
 from pathlib import Path
+
+from ruamel.yaml import YAML
+
+from k3s_client.utils.manifest import get_kubernetes_manifest
 
 TOSCA_FILE = "examples/tosca-file.yaml"  # path relative to example folder
 OUTPUT_FILE = "generated-manifests.yaml"
