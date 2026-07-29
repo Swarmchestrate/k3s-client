@@ -1,9 +1,9 @@
 import json
 import logging
 import re
-from pathlib import Path, PurePosixPath
 from io import StringIO
-from typing import Any, Dict, Optional, List
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 from jinja2 import (
     ChoiceLoader,
@@ -16,9 +16,12 @@ from jinja2 import (
 from ruamel.yaml import YAML
 from sardou import Sardou
 
+from k3s_client.cli.kubectl import Kubectl
+
 yaml = YAML()
 logger = logging.getLogger(__name__)
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
+NODE_AFFINITY_LABEL_KEY = "labels.swarmchestrate.eu/ms_id"
 DEFAULT_ACME_EMAIL = "admin@example.com"
 TRAEFIK_ACME_RESOLVER_NAME = "le"
 TRAEFIK_ACME_STORAGE_PATH = "/persistentdata/acme.json"
@@ -36,9 +39,9 @@ TRAEFIK_TCP_DEFAULT_PASSTHROUGH = True
 _template_loaders = [FileSystemLoader(str(TEMPLATE_DIR))]
 try:
     _template_loaders.append(PackageLoader("k3s_client", "templates"))
-except Exception:
+except Exception as exc:  # noqa: BLE001
     # PackageLoader may fail in some source layouts; filesystem loader remains available.
-    pass
+    logger.debug("PackageLoader unavailable, using filesystem templates only: %s", exc)
 
 jinja_env = Environment(
     loader=ChoiceLoader(_template_loaders),
@@ -59,7 +62,7 @@ def _volume_name_from_path(path: str, index: int) -> str:
     return base[:63].rstrip("-")
 
 
-def _infer_host_path_type(source: str, target: str, volume: Dict[str, Any]) -> str:
+def _infer_host_path_type(source: str, target: str, volume: dict[str, Any]) -> str:
     """Infer Kubernetes hostPath.type for source/target volume entries.
 
     Rules:
@@ -91,7 +94,7 @@ def _name_token(value: Any, fallback: str = "v1") -> str:
     return (token or fallback)[:63].rstrip("-")
 
 
-def _parse_file_mode(mode: Any) -> Optional[int]:
+def _parse_file_mode(mode: Any) -> int | None:
     """Parse a TOSCA File.mode (e.g. "0444") into a Kubernetes integer mode.
 
     Kubernetes expects file modes as base-10 integers representing the octal
@@ -138,15 +141,13 @@ def _parse_traefik_tcp_routes(
     routes: Any,
     *,
     default_name: str,
-    default_namespace: Optional[str],
     default_service_name: str,
     default_service_port: int,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Normalize optional Traefik IngressRouteTCP definitions.
 
     Supported route keys:
     - name
-    - namespace
     - entry_points / entryPoints / entryPoint
     - protocol (only TCP is supported)
     - match OR host_sni / hostSNI
@@ -161,7 +162,7 @@ def _parse_traefik_tcp_routes(
         logger.warning("Ignoring non-list traefik_tcp_routes value: %r", routes)
         return []
 
-    normalized: List[Dict[str, Any]] = []
+    normalized: list[dict[str, Any]] = []
     for idx, route in enumerate(routes, start=1):
         if not isinstance(route, dict):
             logger.warning(
@@ -222,9 +223,6 @@ def _parse_traefik_tcp_routes(
         normalized.append(
             {
                 "name": str(route.get("name") or f"{default_name}-passthrough"),
-                "namespace": str(route.get("namespace"))
-                if route.get("namespace")
-                else default_namespace,
                 "entry_points": [str(ep) for ep in entry_points],
                 "match": str(match),
                 "service_name": str(
@@ -250,11 +248,10 @@ def _parse_ingress_definition(
     ingress: Any,
     *,
     default_name: str,
-    default_namespace: Optional[str],
     default_service_name: str,
     default_service_port: int,
     default_acme_email: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Normalize an optional Traefik-backed HTTP ingress definition."""
     if ingress is None:
         return None
@@ -322,9 +319,6 @@ def _parse_ingress_definition(
 
     return {
         "name": str(ingress.get("name") or default_name),
-        "namespace": str(ingress.get("namespace"))
-        if ingress.get("namespace")
-        else default_namespace,
         "domain": str(domain),
         "path": path,
         "path_type": str(
@@ -344,7 +338,7 @@ def _parse_ingress_definition(
     }
 
 
-def _iter_volume_requirements(node: Dict[str, Any]):
+def _iter_volume_requirements(node: dict[str, Any]):
     """Yield (target_node, mount_path) for each AttachesTo 'volume' requirement.
 
     Microservices attach File/Volume node templates through a requirement named
@@ -366,7 +360,7 @@ def _iter_volume_requirements(node: Dict[str, Any]):
             yield target_node, mount_path
 
 
-def _label_by_semantic_key(labels: Dict[str, Any], semantic_key: str) -> Optional[str]:
+def _label_by_semantic_key(labels: dict[str, Any], semantic_key: str) -> str | None:
     """Return a label value by semantic key, allowing namespaced keys.
 
     Examples for semantic_key="version":
@@ -386,7 +380,7 @@ def _label_by_semantic_key(labels: Dict[str, Any], semantic_key: str) -> Optiona
     return None
 
 
-def _render_yaml(template_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
+def _render_yaml(template_name: str, context: dict[str, Any]) -> dict[str, Any]:
     try:
         template = jinja_env.get_template(template_name)
     except TemplateNotFound as exc:
@@ -403,8 +397,8 @@ def _render_yaml(template_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _render_yaml_documents(
-    template_name: str, context: Dict[str, Any]
-) -> List[Dict[str, Any]]:
+    template_name: str, context: dict[str, Any]
+) -> list[dict[str, Any]]:
     try:
         template = jinja_env.get_template(template_name)
     except TemplateNotFound as exc:
@@ -418,6 +412,200 @@ def _render_yaml_documents(
         ) from exc
     rendered = template.render(**context)
     return [doc for doc in yaml.load_all(StringIO(rendered)) if doc is not None]
+
+
+def build_node_affinity(node_label_key: str, node_id: str) -> dict[str, Any]:
+    """Build a hard nodeAffinity block pinning a pod to a single node."""
+    return {
+        "nodeAffinity": {
+            "requiredDuringSchedulingIgnoredDuringExecution": {
+                "nodeSelectorTerms": [
+                    {
+                        "matchExpressions": [
+                            {
+                                "key": str(node_label_key),
+                                "operator": "In",
+                                "values": [str(node_id)],
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+
+
+def build_pinned_deployment_name(msid: str, node_id: str) -> str:
+    """Build the stable name used for a node-pinned Deployment."""
+    return f"{_name_token(msid)}-pinned-{_name_token(node_id)}"
+
+
+def _deployment_context(
+    *,
+    name: str,
+    version: str,
+    image: str,
+    command: list[str],
+    args: list[str],
+    env_list: list[dict[str, Any]],
+    container_ports: list[dict[str, Any]],
+    volume_mounts: list[dict[str, Any]],
+    volumes: list[dict[str, Any]],
+    labels: dict[str, Any],
+    app_label: str,
+    service_label: str,
+    annotations: dict[str, Any],
+    node_selector: dict[str, Any],
+    affinity: dict[str, Any] | None,
+    service_account: str | None,
+    image_pull_secret: str | None,
+    enable_service_links: bool,
+) -> dict[str, Any]:
+    version_name = _name_token(version)
+    return {
+        "name": name,
+        "version": version,
+        "version_name": version_name,
+        "replicas": 1,
+        "image": image,
+        "command": command,
+        "args": args,
+        "env_list": env_list,
+        "container_ports": container_ports,
+        "volume_mounts": volume_mounts,
+        "volumes": volumes,
+        "labels": labels,
+        "app_label": app_label,
+        "service_label": service_label,
+        "annotations": annotations,
+        "node_selector": node_selector,
+        "affinity": affinity,
+        "service_account": service_account,
+        "image_pull_secret": image_pull_secret,
+        "enable_service_links": enable_service_links,
+    }
+
+
+def _deployment_manifest_from_context(context: dict[str, Any]) -> dict[str, Any]:
+    return _render_yaml("deployment.yaml.j2", context)
+
+
+def get_microservice_deployment(
+    msid: str,
+) -> dict[str, Any]:
+    """Return the live Deployment object for a microservice."""
+    kubectl = Kubectl()
+    deployment_yaml = kubectl.get("deployment", name=msid)
+    deployment = yaml.load(StringIO(deployment_yaml))
+    if not isinstance(deployment, dict):
+        raise TypeError(f"Deployment '{msid}' not found")
+    return deployment
+
+
+def _extract_container_spec_from_deployment(
+    deployment: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = deployment.get("metadata") or {}
+    spec = deployment.get("spec") or {}
+    template = spec.get("template") or {}
+    template_metadata = template.get("metadata") or {}
+    template_spec = template.get("spec") or {}
+    containers = template_spec.get("containers") or []
+    if not containers:
+        raise ValueError("Deployment does not contain any containers")
+
+    container = containers[0] or {}
+    labels = dict(template_metadata.get("labels") or metadata.get("labels") or {})
+    image_pull_secrets = template_spec.get("imagePullSecrets") or []
+
+    return {
+        "labels": labels,
+        "app_label": labels.get("app") or labels.get("service") or metadata.get("name"),
+        "service_label": labels.get("service")
+        or labels.get("app")
+        or metadata.get("name"),
+        "version": labels.get("version") or metadata.get("name") or "v1",
+        "image": container.get("image"),
+        "command": list(container.get("command") or []),
+        "args": list(container.get("args") or []),
+        "env_list": [
+            {"name": env.get("name"), "value": str(env.get("value", ""))}
+            for env in (container.get("env") or [])
+            if isinstance(env, dict) and env.get("name")
+        ],
+        "container_ports": [
+            {
+                "containerPort": int(port.get("containerPort", 0)),
+                "protocol": str(port.get("protocol", "TCP")),
+            }
+            for port in (container.get("ports") or [])
+            if isinstance(port, dict)
+        ],
+        "volume_mounts": [
+            dict(mount)
+            for mount in (container.get("volumeMounts") or [])
+            if isinstance(mount, dict)
+        ],
+        "volumes": [
+            dict(volume)
+            for volume in (template_spec.get("volumes") or [])
+            if isinstance(volume, dict)
+        ],
+        "annotations": dict(template_metadata.get("annotations") or {}),
+        "node_selector": dict(template_spec.get("nodeSelector") or {}),
+        "service_account": template_spec.get("serviceAccountName"),
+        "image_pull_secret": (
+            str(image_pull_secrets[0].get("name"))
+            if image_pull_secrets and isinstance(image_pull_secrets[0], dict)
+            else None
+        ),
+        "enable_service_links": bool(template_spec.get("enableServiceLinks", False)),
+    }
+
+
+def get_microservice_container_spec(
+    msid: str,
+) -> dict[str, Any]:
+    """Return the live container spec for a microservice Deployment."""
+    deployment = get_microservice_deployment(msid)
+    return _extract_container_spec_from_deployment(deployment)
+
+
+def build_pinned_pod_manifest(
+    msid: str,
+    node_id: str,
+    container_spec: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a single-replica Deployment pinned to one node.
+
+    The returned manifest uses the same Deployment template as TOSCA output,
+    but with a node-specific name/version so multiple pinned replicas can
+    coexist safely.
+    """
+    pinned_version = _name_token(node_id)
+    deployment_name = f"{_name_token(msid)}-pinned"
+    context = _deployment_context(
+        name=deployment_name,
+        version=pinned_version,
+        image=str(container_spec["image"]),
+        command=list(container_spec.get("command") or []),
+        args=list(container_spec.get("args") or []),
+        env_list=list(container_spec.get("env_list") or []),
+        container_ports=list(container_spec.get("container_ports") or []),
+        volume_mounts=list(container_spec.get("volume_mounts") or []),
+        volumes=list(container_spec.get("volumes") or []),
+        labels=dict(container_spec.get("labels") or {}),
+        app_label=str(container_spec.get("app_label") or _name_token(msid)),
+        service_label=str(container_spec.get("service_label") or _name_token(msid)),
+        annotations=dict(container_spec.get("annotations") or {}),
+        node_selector=dict(container_spec.get("node_selector") or {}),
+        affinity=build_node_affinity(NODE_AFFINITY_LABEL_KEY, node_id),
+        service_account=container_spec.get("service_account"),
+        image_pull_secret=container_spec.get("image_pull_secret"),
+        enable_service_links=bool(container_spec.get("enable_service_links", False)),
+    )
+    manifest = _deployment_manifest_from_context(context)
+    return manifest
 
 
 def _read_tosca_file_content(tosca_file: str) -> str:
@@ -437,7 +625,7 @@ def _read_tosca_file_content(tosca_file: str) -> str:
         candidates.append(Path(__file__).resolve().parents[2] / input_path)
     logger.debug("TOSCA file candidates: %s", [str(c) for c in candidates])
 
-    resolved_path: Optional[Path] = None
+    resolved_path: Path | None = None
     for candidate in candidates:
         if candidate.exists():
             resolved_path = candidate
@@ -462,11 +650,11 @@ def _read_tosca_file_content(tosca_file: str) -> str:
 
 def get_kubernetes_manifest(
     *,
-    tosca_file: Optional[str] = None,
-    tosca_content: Optional[str] = None,
-    image_pull_secret: Optional[str] = None,
-    acme_email: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+    tosca_file: str | None = None,
+    tosca_content: str | None = None,
+    image_pull_secret: str | None = None,
+    acme_email: str | None = None,
+) -> list[dict[str, Any]]:
     logger.debug(
         "Generating Kubernetes manifest",
         extra={
@@ -484,7 +672,7 @@ def get_kubernetes_manifest(
     try:
         tosca_dict = yaml.load(StringIO(tosca_content))
         if not isinstance(tosca_dict, dict):
-            raise ValueError("TOSCA content must parse into a mapping")
+            raise TypeError("TOSCA content must parse into a mapping")
     except Exception as exc:
         logger.exception("Failed to parse TOSCA YAML content")
         raise ValueError(f"Invalid TOSCA content: {exc}") from exc
@@ -510,16 +698,16 @@ def get_kubernetes_manifest(
     if not node_templates:
         raise ValueError("No node_templates found in TOSCA YAML")
 
-    manifests: List[Dict[str, Any]] = []
-    pending_services: Dict[str, Dict[str, Any]] = {}
-    pending_ingress_route_tcp: List[Dict[str, Any]] = []
-    pending_ingresses: List[Dict[str, Any]] = []
+    manifests: list[dict[str, Any]] = []
+    pending_services: dict[str, dict[str, Any]] = {}
+    pending_ingress_route_tcp: list[dict[str, Any]] = []
+    pending_ingresses: list[dict[str, Any]] = []
     traefik_acme_email = str(acme_email or DEFAULT_ACME_EMAIL)
     traefik_cert_resolver = TRAEFIK_ACME_RESOLVER_NAME
 
     # File node templates (derived from Volume) are mounted into the workloads
     # that attach them via a 'volume' requirement.
-    file_nodes: Dict[str, Dict[str, Any]] = {
+    file_nodes: dict[str, dict[str, Any]] = {
         node_name: node
         for node_name, node in node_templates.items()
         if str(node.get("type", "")).endswith("File")
@@ -682,8 +870,8 @@ def get_kubernetes_manifest(
                 )
             )
 
-            config_map: Dict[str, Any] = {"name": cm_name}
-            item: Dict[str, Any] = {"key": data_key, "path": data_key}
+            config_map: dict[str, Any] = {"name": cm_name}
+            item: dict[str, Any] = {"key": data_key, "path": data_key}
             if mode_int is not None:
                 config_map["defaultMode"] = mode_int
                 item["mode"] = mode_int
@@ -734,7 +922,6 @@ def get_kubernetes_manifest(
             _parse_traefik_tcp_routes(
                 props.get("traefik_tcp_routes"),
                 default_name=service_name,
-                default_namespace=None,
                 default_service_name=app_name,
                 default_service_port=first_service_port,
             )
@@ -743,7 +930,7 @@ def get_kubernetes_manifest(
         # HTTP ingress: 'routes' (list of dicts with domain/port/path) takes priority
         # over the legacy 'ingress' single-dict property.
         routes_raw = props.get("routes")
-        ingress_sources: List[Any] = []
+        ingress_sources: list[Any] = []
         if routes_raw is not None:
             if isinstance(routes_raw, list):
                 ingress_sources = routes_raw
@@ -758,7 +945,6 @@ def get_kubernetes_manifest(
             ingress_definition = _parse_ingress_definition(
                 ingress_src,
                 default_name=service_name,
-                default_namespace=None,
                 default_service_name=app_name,
                 default_service_port=first_service_port,
                 default_acme_email=DEFAULT_ACME_EMAIL,

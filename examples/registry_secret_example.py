@@ -4,7 +4,6 @@ REGISTRY = "index.docker.io"
 USERNAME = "user"
 PASSWORD = "pass"
 EMAIL = "user@example.com"
-NAMESPACE = "default"
 SECRET_NAME = "my-registry-secret"
 KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml"
 
@@ -14,7 +13,6 @@ def create_registry_secret_example(
     username: str = USERNAME,
     password: str = PASSWORD,
     email: str | None = EMAIL,
-    namespace: str = NAMESPACE,
     secret_name: str = SECRET_NAME,
     kubeconfig_path: str | None = None,
 ) -> str:
@@ -26,7 +24,6 @@ def create_registry_secret_example(
         username: Registry username
         password: Registry password
         email: Optional email address for the registry secret
-        namespace: Kubernetes namespace
         secret_name: Name for the secret
         kubeconfig_path: Optional path to a kubeconfig file.
 
@@ -40,7 +37,6 @@ def create_registry_secret_example(
         username=username,
         password=password,
         email=email,
-        namespace=namespace,
     )
     print(f"Registry secret created: {result}")
     return result
@@ -52,7 +48,6 @@ if __name__ == "__main__":
         username=USERNAME,
         password=PASSWORD,
         email=EMAIL,
-        namespace=NAMESPACE,
         secret_name=SECRET_NAME,
         kubeconfig_path=KUBECONFIG_PATH,
     )

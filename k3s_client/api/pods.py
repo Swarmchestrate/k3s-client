@@ -1,9 +1,13 @@
 import logging
-import os
+from io import StringIO
+
+from ruamel.yaml import YAML
+
+from k3s_client.cli.kubectl import Kubectl
 from k3s_client.exceptions import K3sClientError
-from k3s_client.agent import SwarmAgentClient
 
 logger = logging.getLogger(__name__)
+yaml = YAML()
 
 
 def handle_errors(func):
@@ -20,41 +24,41 @@ def handle_errors(func):
 
 
 class PodManager:
-    """Manage pods by delegating operations to swarm-agent."""
+    """Manage pods directly through the Kubernetes SDK."""
 
     @handle_errors
     def __init__(
         self,
         kubeconfig_path=None,
-        default_namespace=None,
-        execution_mode="swarm-agent",
-        swarm_agent_url=None,
-        swarm_agent_token=None,
     ):
-        self.execution_mode = str(execution_mode or "swarm-agent").strip().lower()
-        if self.execution_mode != "swarm-agent":
-            raise ValueError("execution_mode must be 'swarm-agent'")
+        self.kubectl = Kubectl(kubeconfig=kubeconfig_path)
+        logger.info("Initialized PodManager")
 
-        # Legacy init param accepted for backward compatibility.
-        _ = kubeconfig_path
-        base_url = swarm_agent_url or os.getenv("SWARM_AGENT_URL")
-        token = swarm_agent_token or os.getenv("SWARM_AGENT_TOKEN")
-        self.agent = SwarmAgentClient(base_url=base_url, token=token)
-
-        self.default_namespace = default_namespace or "default"
-        logger.info(
-            "Initialized PodManager with namespace=%s mode=%s",
-            self.default_namespace,
-            self.execution_mode,
-        )
-
-    def _agent_execute(self, action, params):
-        return self.agent.execute(action=action, params=params)
+    @staticmethod
+    def _load_yaml_documents(yaml_text: str):
+        return [doc for doc in yaml.load_all(StringIO(yaml_text)) if doc is not None]
 
     @handle_errors
-    def list_pods(self, namespace=None, label_selector=None):
-        namespace = namespace or self.default_namespace
-        return self._agent_execute(
-            "pods.list_pods",
-            {"namespace": namespace, "label_selector": label_selector},
-        )
+    def list_pods(self, label_selector=None):
+        pod_yaml = self.kubectl.get("pod", label_selector=label_selector)
+        documents = self._load_yaml_documents(pod_yaml)
+        if not documents:
+            return []
+        document = documents[0]
+        return [
+            item for item in (document.get("items") or []) if isinstance(item, dict)
+        ]
+
+    @handle_errors
+    def get_grouped_pod_node_mapping(self, label_selector=None):
+        grouped = {}
+        for pod in self.list_pods(label_selector=label_selector):
+            metadata = pod.get("metadata") or {}
+            labels = metadata.get("labels") or {}
+            msid = labels.get("service") or labels.get("app") or metadata.get("name")
+            pod_name = metadata.get("name")
+            node_name = (pod.get("spec") or {}).get("nodeName")
+            if not msid or not pod_name:
+                continue
+            grouped.setdefault(msid, {})[pod_name] = node_name
+        return grouped
