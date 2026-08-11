@@ -56,7 +56,16 @@ class Kubectl:
         return [doc for doc in documents if isinstance(doc, dict)]
 
     def _serialize(self, payload, output: str = "yaml") -> str:
-        sanitized = self.api_client.sanitize_for_serialization(payload)
+        try:
+            sanitized = self.api_client.sanitize_for_serialization(payload)
+        except AttributeError:
+            if isinstance(payload, (dict, list, str, int, float, bool)) or payload is None:
+                sanitized = payload
+            elif hasattr(payload, "to_dict"):
+                sanitized = payload.to_dict()
+            else:
+                sanitized = payload
+
         if output == "json":
             return json.dumps(sanitized)
 

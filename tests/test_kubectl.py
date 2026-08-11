@@ -267,6 +267,32 @@ def test_get_serializes_yaml_for_named_resource(kubectl_and_mocks):
     resource.get.assert_called_once_with(namespace="default", name="pod-a")
 
 
+def test_get_falls_back_when_sdk_serialization_raises_attribute_error(
+    kubectl_and_mocks,
+):
+    kubectl = kubectl_and_mocks["kubectl"]
+    resource = MagicMock()
+    resource.namespaced = True
+    resource.get.return_value = MagicMock(
+        to_dict=MagicMock(
+            return_value={
+                "items": [
+                    {"metadata": {"name": "pod-a"}, "spec": {"nodeName": "node-1"}}
+                ]
+            }
+        )
+    )
+    kubectl.api_client.sanitize_for_serialization.side_effect = AttributeError(
+        "'NoneType' object has no attribute 'items'"
+    )
+
+    with patch.object(kubectl, "_resource_for_type", return_value=resource):
+        result = kubectl.get("pod")
+
+    assert "nodeName: node-1" in result
+    resource.get.assert_called_once_with(namespace="default")
+
+
 def test_dry_run_api_exception_propagates_as_k3s_client_error(kubectl_and_mocks):
     kubectl = kubectl_and_mocks["kubectl"]
     resource = MagicMock()
