@@ -1,7 +1,6 @@
 from k3s_client.api.applications import ApplicationManager
 
 LABEL_SELECTOR = None
-KUBECONFIG_PATH = "/etc/rancher/k3s/k3s.yaml"
 
 
 def pod_node_mapping_example(
@@ -13,7 +12,7 @@ def pod_node_mapping_example(
 
     Args:
         label_selector: Optional label selector to filter pods.
-        kubeconfig_path: Optional path to a kubeconfig file.
+        kubeconfig_path: Optional path to a kubeconfig file for out-of-cluster use.
 
     Returns:
         Dictionary mapping pod names to node names.
@@ -25,7 +24,4 @@ def pod_node_mapping_example(
 
 
 if __name__ == "__main__":
-    pod_node_mapping_example(
-        label_selector=LABEL_SELECTOR,
-        kubeconfig_path=KUBECONFIG_PATH,
-    )
+    pod_node_mapping_example(label_selector=LABEL_SELECTOR)

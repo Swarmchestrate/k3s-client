@@ -196,7 +196,6 @@ def test_application_manager_dry_run_supported_across_methods():
             app.scale_to("ms1", 2),
             app.delete_pod("ms1", podid="pod-a"),
             app.migrate_pod("ms1", podid="pod-a", nodeid="n2"),
-            app.delete_microservice("app=ms1"),
             app.get_pod_node_mapping(label_selector="app=ms1"),
         ]
 
@@ -227,7 +226,6 @@ def test_application_manager_dry_run_executes_underlying_calls_and_returns_resul
         kubectl.apply_manifest.return_value = [{"kind": "Deployment"}]
         kubectl.delete_manifest.return_value = [{"status": "Success"}]
         kubectl.create_registry_secret.return_value = {"kind": "Secret"}
-        kubectl.delete_by_label.return_value = {"deleted": 3}
         pod_manager.get_grouped_pod_node_mapping.return_value = {
             "ms1": {"pod-a": "node-1"}
         }
@@ -264,7 +262,6 @@ def test_application_manager_dry_run_executes_underlying_calls_and_returns_resul
         migrate_response = app.migrate_pod(
             "ms1", podid="pod-a", nodeid="n2", dry_run=True
         )
-        delete_ms_response = app.delete_microservice("ms1", dry_run=True)
         mapping_response = app.get_pod_node_mapping(
             label_selector="app=ms1", dry_run=True
         )
@@ -276,7 +273,6 @@ def test_application_manager_dry_run_executes_underlying_calls_and_returns_resul
         assert create_response["result"] == {"operation": "create_pod"}
         assert delete_pod_response["result"] == {"operation": "delete_pod"}
         assert migrate_response["result"] == {"operation": "migrate_pod"}
-        assert delete_ms_response["result"] == {"deleted": 3}
         assert mapping_response["result"] == {"ms1": {"pod-a": "node-1"}}
 
         kubectl.apply_manifest.assert_any_call(str(out_file), dry_run=True)
@@ -307,11 +303,6 @@ def test_application_manager_dry_run_executes_underlying_calls_and_returns_resul
             nodeid="n2",
             dry_run=True,
         )
-        kubectl.delete_by_label.assert_called_once_with(
-            "app=ms1",
-            resource_types=["all", "configmap", "secret", "pvc", "ingress"],
-            dry_run=True,
-        )
 
 
 def test_pod_manager_lists_and_groups_pods_locally():
@@ -340,6 +331,29 @@ def test_pod_manager_lists_and_groups_pods_locally():
         assert [pod["metadata"]["name"] for pod in pods] == ["pod-a", "pod-b"]
         assert grouped == {"ms1": {"pod-a": "node-1", "pod-b": "node-2"}}
         kubectl.get.assert_called_with("pod", label_selector=None)
+
+
+def test_pod_manager_accepts_direct_dict_payloads():
+    with patch("k3s_client.api.pods.Kubectl") as mock_kubectl:
+        kubectl = mock_kubectl.return_value
+        kubectl.get.return_value = {
+            "items": [
+                {
+                    "metadata": {"name": "pod-a", "labels": {"app": "ms1"}},
+                    "spec": {"nodeName": "node-1"},
+                },
+                {
+                    "metadata": {"name": "pod-b", "labels": {"service": "ms1"}},
+                    "spec": {},
+                },
+            ]
+        }
+
+        manager = PodManager()
+
+        assert manager.get_grouped_pod_node_mapping() == {
+            "ms1": {"pod-a": "node-1", "pod-b": None}
+        }
 
 
 def test_optimizer_runtime_uses_swarm_optimiser_field_manager_and_pinned_affinity():

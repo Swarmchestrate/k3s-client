@@ -65,11 +65,6 @@ def parse_args() -> argparse.Namespace:
         help="Optional registry email",
     )
     parser.add_argument(
-        "--delete-app-label",
-        required=True,
-        help="Application label used by delete_microservice",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Run ApplicationManager methods in dry-run mode and validate result payloads",
@@ -144,10 +139,6 @@ def main() -> int:
         )
     results["delete_manifest"] = manager.delete_manifest(
         str(manifest_path),
-        dry_run=args.dry_run,
-    )
-    results["delete_microservice"] = manager.delete_microservice(
-        app_label=args.delete_app_label,
         dry_run=args.dry_run,
     )
 

@@ -66,7 +66,6 @@ Class guide:
 | `delete_pod` | `msid`, `podid=None`, `dry_run=None` | Delete a runtime pod through the runtime client |
 | `scale_to` | `msid`, `count`, `dry_run=None` | Scale a deployment through the runtime client |
 | `migrate_pod` | `msid`, `podid=None`, `nodeid=None`, `dry_run=None` | Migrate pod placement through the runtime client |
-| `delete_microservice` | `app_label`, `dry_run=None` | Delete all resources for a given app label |
 | `get_pod_node_mapping` | `label_selector=None`, `dry_run=None` | Return pod-to-node mapping by microservice |
 
 Deployment model: apply workloads with `apply_manifest`, manage runtime scaling/placement with the runtime methods, and clean up with `delete_manifest`.
@@ -111,6 +110,8 @@ Provide exactly one input source: `tosca_file` or `tosca_content`.
 ## Examples
 
 Use these scripts from the `examples/` folder for end-to-end usage:
+
+Most examples assume in-cluster execution by default so they can run unchanged inside the Swarm Agent pod. For local development, pass `kubeconfig_path` explicitly.
 
 | Example script | Description |
 |----------------|----------------------|

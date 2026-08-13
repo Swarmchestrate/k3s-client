@@ -40,11 +40,18 @@ class PodManager:
 
     @handle_errors
     def list_pods(self, label_selector=None):
-        pod_yaml = self.kubectl.get("pod", label_selector=label_selector)
-        documents = self._load_yaml_documents(pod_yaml)
-        if not documents:
+        pod_payload = self.kubectl.get("pod", label_selector=label_selector)
+        if isinstance(pod_payload, dict):
+            document = pod_payload
+        else:
+            documents = self._load_yaml_documents(pod_payload)
+            if not documents:
+                return []
+            document = documents[0]
+
+        if not isinstance(document, dict):
             return []
-        document = documents[0]
+
         return [
             item for item in (document.get("items") or []) if isinstance(item, dict)
         ]

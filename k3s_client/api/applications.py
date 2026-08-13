@@ -301,31 +301,6 @@ class ApplicationManager:
         )
 
     @handle_errors
-    def delete_microservice(
-        self,
-        app_label,
-        dry_run: bool | None = None,
-    ):
-        params = {"app_label": app_label}
-        if self._effective_dry_run(dry_run):
-            dry_run_result = self.kubectl.delete_by_label(
-                f"app={app_label}",
-                resource_types=["all", "configmap", "secret", "pvc", "ingress"],
-                dry_run=True,
-            )
-            return self._dry_run_response(
-                "delete_microservice",
-                params,
-                result=dry_run_result,
-            )
-
-        return self.kubectl.delete_by_label(
-            f"app={app_label}",
-            resource_types=["all", "configmap", "secret", "pvc", "ingress"],
-            dry_run=False,
-        )
-
-    @handle_errors
     def get_pod_node_mapping(
         self,
         label_selector=None,
