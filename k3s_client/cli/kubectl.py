@@ -59,7 +59,10 @@ class Kubectl:
         try:
             sanitized = self.api_client.sanitize_for_serialization(payload)
         except AttributeError:
-            if isinstance(payload, (dict, list, str, int, float, bool)) or payload is None:
+            if (
+                isinstance(payload, (dict, list, str, int, float, bool))
+                or payload is None
+            ):
                 sanitized = payload
             elif hasattr(payload, "to_dict"):
                 sanitized = payload.to_dict()
