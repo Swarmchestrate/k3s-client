@@ -55,6 +55,20 @@ class Kubectl:
             documents = [doc for doc in yaml.load_all(handle) if doc is not None]
         return [doc for doc in documents if isinstance(doc, dict)]
 
+    def _to_serializable(self, response):
+        """Convert a dynamic-client `ResourceInstance` or typed API response to a plain dict.
+
+        `ApiClient.sanitize_for_serialization` assumes real OpenAPI model objects
+        (with `openapi_types`/`attribute_map`); dynamic-client `ResourceInstance`
+        objects lack those and raise `AttributeError` on `None.items()`. Prefer
+        each object's own `to_dict()` when available.
+        """
+        if response is None:
+            return None
+        if hasattr(response, "to_dict"):
+            return response.to_dict()
+        return self.api_client.sanitize_for_serialization(response)
+
     def _serialize(self, payload, output: str = "yaml") -> str:
         try:
             sanitized = self.api_client.sanitize_for_serialization(payload)
@@ -163,7 +177,7 @@ class Kubectl:
             response = resource.create(**create_args)
 
         if dry_run:
-            return self.api_client.sanitize_for_serialization(response)
+            return self._to_serializable(response)
         return f"{kind}/{name} configured"
 
     def _delete_document(self, document: dict, dry_run: bool = False):
@@ -193,7 +207,7 @@ class Kubectl:
             response = None
 
         if dry_run:
-            return self.api_client.sanitize_for_serialization(response)
+            return self._to_serializable(response)
         return f"{kind}/{name} deleted"
 
     def _delete_by_selector(
@@ -227,7 +241,7 @@ class Kubectl:
                 delete_response = resource.delete(**delete_args)
                 if dry_run:
                     delete_responses.append(
-                        self.api_client.sanitize_for_serialization(delete_response)
+                        self._to_serializable(delete_response)
                     )
             except ApiException as exc:
                 if exc.status != 404:
@@ -294,7 +308,7 @@ class Kubectl:
             except ApiException as exc:
                 raise K3sClientError(str(exc))
             if dry_run:
-                return self.api_client.sanitize_for_serialization(response)
+                return self._to_serializable(response)
             return f"deployment/{name} scaled"
 
         resource = self._resource_for_type(resource_type)
@@ -317,7 +331,7 @@ class Kubectl:
         except ApiException as exc:
             raise K3sClientError(str(exc))
         if dry_run:
-            return self.api_client.sanitize_for_serialization(response)
+            return self._to_serializable(response)
         return f"{resource_type}/{name} scaled"
 
     # --------------------
@@ -426,7 +440,7 @@ class Kubectl:
         except ApiException as exc:
             raise K3sClientError(str(exc))
         if dry_run:
-            return self.api_client.sanitize_for_serialization(response)
+            return self._to_serializable(response)
         return f"{resource_type}/{name} annotated"
 
     # --------------------
@@ -462,7 +476,7 @@ class Kubectl:
                     raise K3sClientError(str(exc))
                 response = None
             if dry_run:
-                return self.api_client.sanitize_for_serialization(response)
+                return self._to_serializable(response)
             return f"{resource_type}/{name_or_manifest} deleted"
         else:
             if not os.path.exists(name_or_manifest):
