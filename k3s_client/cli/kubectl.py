@@ -240,9 +240,7 @@ class Kubectl:
             try:
                 delete_response = resource.delete(**delete_args)
                 if dry_run:
-                    delete_responses.append(
-                        self._to_serializable(delete_response)
-                    )
+                    delete_responses.append(self._to_serializable(delete_response))
             except ApiException as exc:
                 if exc.status != 404:
                     raise K3sClientError(str(exc))
