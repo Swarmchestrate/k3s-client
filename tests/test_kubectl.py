@@ -293,6 +293,61 @@ def test_get_falls_back_when_sdk_serialization_raises_attribute_error(
     resource.get.assert_called_once_with(namespace="default")
 
 
+def test_annotate_dry_run_falls_back_when_sdk_serialization_raises_attribute_error(
+    kubectl_and_mocks,
+):
+    kubectl = kubectl_and_mocks["kubectl"]
+    resource = MagicMock()
+    resource.namespaced = True
+    resource.patch.return_value = MagicMock(
+        to_dict=MagicMock(return_value={"kind": "Pod", "metadata": {"name": "pod-a"}})
+    )
+    kubectl.api_client.sanitize_for_serialization.side_effect = AttributeError(
+        "'NoneType' object has no attribute 'items'"
+    )
+
+    with patch.object(kubectl, "_resource_for_type", return_value=resource):
+        result = kubectl.annotate(
+            "pod",
+            "pod-a",
+            "controller.kubernetes.io/pod-deletion-cost",
+            "-999",
+            dry_run=True,
+        )
+
+    assert result == {"kind": "Pod", "metadata": {"name": "pod-a"}}
+
+
+def test_apply_document_dry_run_falls_back_when_sdk_serialization_raises_attribute_error(
+    kubectl_and_mocks,
+):
+    kubectl = kubectl_and_mocks["kubectl"]
+    resource = MagicMock()
+    resource.namespaced = True
+    resource.patch.side_effect = ApiException(status=404, reason="not found")
+    resource.create.return_value = MagicMock(
+        to_dict=MagicMock(
+            return_value={"kind": "Deployment", "metadata": {"name": "pinned"}}
+        )
+    )
+    kubectl.api_client.sanitize_for_serialization.side_effect = AttributeError(
+        "'NoneType' object has no attribute 'items'"
+    )
+
+    with patch.object(kubectl, "_resource_for_gvk", return_value=resource):
+        result = kubectl._apply_document(
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {"name": "pinned"},
+            },
+            field_manager="swarm-optimiser",
+            dry_run=True,
+        )
+
+    assert result == {"kind": "Deployment", "metadata": {"name": "pinned"}}
+
+
 def test_dry_run_api_exception_propagates_as_k3s_client_error(kubectl_and_mocks):
     kubectl = kubectl_and_mocks["kubectl"]
     resource = MagicMock()
