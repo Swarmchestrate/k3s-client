@@ -92,7 +92,7 @@ Return-shape note: non-dry-run write calls keep human-readable status strings in
 
 | Method | Parameters | Description |
 |--------|------------|-------------|
-| `list_pods` | `label_selector=None` | List pods, optionally filtered by label |
+| `list_nodes` | `label_selector=None` | List cluster nodes, optionally filtered by label |
 
 ---
 
@@ -119,6 +119,7 @@ Most examples assume in-cluster execution by default so they can run unchanged i
 | `manifest_apply_example.py` | Apply an existing manifest file |
 | `manifest_delete_example.py` | Delete resources from a manifest file |
 | `apply_tosca_example.py` | Generate and apply from TOSCA in one flow |
+| `list_nodes_example.py` | List cluster nodes, optionally filtered by label |
 | `scale_microservice_example.py` | Scale a microservice deployment |
 | `pod_runtime_operations_example.py` | Create, delete, and migrate runtime pods |
 | `registry_secret_example.py` | Create/update registry pull secrets |
