@@ -5,24 +5,15 @@ metadata:
   namespace: kube-system
 spec:
   valuesContent: |-
+    persistence:
+      enabled: true
+      existingClaim: {{ persistent_volume_claim }}
+      path: {{ persistent_mount_path }}
     additionalArguments:
       - "--certificatesresolvers.{{ cert_resolver }}.acme.email={{ acme_email }}"
       - "--certificatesresolvers.{{ cert_resolver }}.acme.storage={{ acme_storage_path }}"
-      - "--certificatesresolvers.{{ cert_resolver }}.acme.httpchallenge.entrypoint=web"
-    ports:
-      web:
-        exposedPort: 80
-      websecure:
-        exposedPort: 443
-    deployment:
-      additionalVolumes:
-        - name: {{ persistent_volume_claim }}
-          persistentVolumeClaim:
-            claimName: {{ persistent_volume_claim }}
-    additionalVolumeMounts:
-      - name: {{ persistent_volume_claim }}
-        mountPath: {{ persistent_mount_path }}
-        readOnly: false
+      - "--certificatesresolvers.{{ cert_resolver }}.acme.tlschallenge=true"
+      - "--certificatesresolvers.{{ cert_resolver }}.acme.tlschallenge.delay=10s"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

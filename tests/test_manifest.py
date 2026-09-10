@@ -448,10 +448,9 @@ node_templates:
       - port: 80
         targetPort: 80
       ingress:
-        domain: cloud-193-225-251-54.sztaki.science-cloud.hu
+        domain: site-a.example.com
         port: 80
         path: /
-        email: emodi.mark@gmail.com
 """
     with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
         mock_sardou.return_value.get_affinity.return_value = {}
@@ -479,13 +478,13 @@ node_templates:
     assert ingress["spec"]["ingressClassName"] == "traefik"
     assert (
         ingress["spec"]["rules"][0]["host"]
-        == "cloud-193-225-251-54.sztaki.science-cloud.hu"
+        == "site-a.example.com"
     )
     backend = ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]
     assert backend["name"] == "site-a"
     assert backend["port"]["number"] == 80
     assert ingress["spec"]["tls"][0]["hosts"] == [
-        "cloud-193-225-251-54.sztaki.science-cloud.hu"
+        "site-a.example.com"
     ]
 
     chart_config = next(d for d in manifests if d.get("kind") == "HelmChartConfig")
@@ -516,8 +515,7 @@ node_templates:
       - port: 80
         targetPort: 80
       ingress:
-        domain: cloud-193-225-251-54.sztaki.science-cloud.hu
-        email: emodi.mark@gmail.com
+        domain: site-a.example.com
   site_b:
     type: tosca.nodes.Swarm.Microservice
     properties:
@@ -529,7 +527,6 @@ node_templates:
         targetPort: 80
       ingress:
         domain: webswch.chickenkiller.com
-        email: emodi.mark@gmail.com
 """
     with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
         mock_sardou.return_value.get_affinity.return_value = {}
@@ -538,7 +535,7 @@ node_templates:
     ingresses = [d for d in manifests if d.get("kind") == "Ingress"]
     assert len(ingresses) == 2
     assert sorted(i["spec"]["rules"][0]["host"] for i in ingresses) == [
-        "cloud-193-225-251-54.sztaki.science-cloud.hu",
+        "site-a.example.com",
         "webswch.chickenkiller.com",
     ]
     assert len([d for d in manifests if d.get("kind") == "HelmChartConfig"]) == 1

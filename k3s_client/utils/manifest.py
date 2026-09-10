@@ -19,14 +19,15 @@ from sardou import Sardou
 from k3s_client.cli.kubectl import Kubectl
 
 yaml = YAML()
+yaml.width = 4096  # avoid wrapping long scalar values (e.g. domains) onto a new line
 logger = logging.getLogger(__name__)
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
 NODE_AFFINITY_LABEL_KEY = "labels.swarmchestrate.eu/ms_id"
 DEFAULT_ACME_EMAIL = "admin@swarmchestrate.eu"
 TRAEFIK_ACME_RESOLVER_NAME = "le"
-TRAEFIK_ACME_STORAGE_PATH = "/persistentdata/acme.json"
+TRAEFIK_ACME_STORAGE_PATH = "/data/acme.json"
 TRAEFIK_ACME_VOLUME_NAME = "traefik-data"
-TRAEFIK_ACME_VOLUME_MOUNT_PATH = "/persistentdata"
+TRAEFIK_ACME_VOLUME_MOUNT_PATH = "/data"
 TRAEFIK_ACME_PVC_NAMESPACE = "kube-system"
 TRAEFIK_ACME_PVC_SIZE = "64Mi"
 TRAEFIK_DEFAULT_INGRESS_CLASS = "traefik"
@@ -312,9 +313,6 @@ def _parse_ingress_definition(
         annotations.setdefault("traefik.ingress.kubernetes.io/router.tls", "true")
         annotations.setdefault(
             "traefik.ingress.kubernetes.io/router.tls.certresolver", cert_resolver
-        )
-        annotations.setdefault(
-            "traefik.ingress.kubernetes.io/router.tls.domains.0.main", str(domain)
         )
 
     return {
