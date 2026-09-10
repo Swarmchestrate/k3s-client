@@ -15,6 +15,7 @@ from k3s_client.utils.manifest import (
 
 logger = logging.getLogger(__name__)
 yaml = YAML()
+yaml.width = 4096  # avoid wrapping long scalar values (e.g. domains) onto a new line
 
 
 def handle_errors(func):
@@ -312,7 +313,7 @@ class ApplicationManager:
         """
         params = {"label_selector": label_selector}
         if self._effective_dry_run(dry_run):
-            mapping = self.pod_manager.get_grouped_pod_node_mapping(
+            mapping = self.pod_manager._get_grouped_pod_node_mapping(
                 label_selector=label_selector
             )
             return self._dry_run_response(
@@ -321,6 +322,6 @@ class ApplicationManager:
                 result=mapping,
             )
 
-        return self.pod_manager.get_grouped_pod_node_mapping(
+        return self.pod_manager._get_grouped_pod_node_mapping(
             label_selector=label_selector
         )

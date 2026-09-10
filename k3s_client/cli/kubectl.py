@@ -12,6 +12,7 @@ from k3s_client.exceptions import K3sClientError
 
 logger = logging.getLogger(__name__)
 yaml = YAML()
+yaml.width = 4096  # avoid wrapping long scalar values (e.g. domains) onto a new line
 
 
 class Kubectl:
@@ -117,6 +118,8 @@ class Kubectl:
             "replicaset": ("apps/v1", "ReplicaSet"),
             "statefulset": ("apps/v1", "StatefulSet"),
             "daemonset": ("apps/v1", "DaemonSet"),
+            "node": ("v1", "Node"),
+            "nodes": ("v1", "Node"),
         }
         key = resource_type.strip().lower()
         if key not in mapping:
