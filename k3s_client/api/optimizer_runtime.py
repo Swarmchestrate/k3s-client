@@ -15,6 +15,7 @@ from k3s_client.utils.manifest import (
 )
 
 yaml = YAML()
+yaml.width = 4096  # avoid wrapping long scalar values (e.g. domains) onto a new line
 
 
 class OptimizerRuntimeClient:

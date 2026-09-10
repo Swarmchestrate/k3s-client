@@ -60,7 +60,7 @@ def test_application_manager_delegates_runtime_methods_to_local_optimizer():
     ):
         runtime = mock_runtime.return_value
         pod_manager = mock_pod_manager.return_value
-        pod_manager.get_grouped_pod_node_mapping.return_value = {
+        pod_manager._get_grouped_pod_node_mapping.return_value = {
             "ms1": {"pod-a": "node-1"}
         }
         runtime.scale_to.return_value = {"ok": True, "operation": "scale_to"}
@@ -102,7 +102,7 @@ def test_application_manager_delegates_runtime_methods_to_local_optimizer():
             nodeid="node-3",
             dry_run=False,
         )
-        pod_manager.get_grouped_pod_node_mapping.assert_called_once_with(
+        pod_manager._get_grouped_pod_node_mapping.assert_called_once_with(
             label_selector=None,
         )
 
@@ -226,7 +226,7 @@ def test_application_manager_dry_run_executes_underlying_calls_and_returns_resul
         kubectl.apply_manifest.return_value = [{"kind": "Deployment"}]
         kubectl.delete_manifest.return_value = [{"status": "Success"}]
         kubectl.create_registry_secret.return_value = {"kind": "Secret"}
-        pod_manager.get_grouped_pod_node_mapping.return_value = {
+        pod_manager._get_grouped_pod_node_mapping.return_value = {
             "ms1": {"pod-a": "node-1"}
         }
         runtime.scale_to.return_value = {"operation": "scale_to"}
@@ -305,7 +305,7 @@ def test_application_manager_dry_run_executes_underlying_calls_and_returns_resul
         )
 
 
-def test_pod_manager_lists_and_groups_pods_locally():
+def test_pod_manager_groups_pods_locally():
     with patch("k3s_client.api.pods.Kubectl") as mock_kubectl:
         kubectl = mock_kubectl.return_value
         kubectl.get.return_value = (
@@ -325,10 +325,8 @@ def test_pod_manager_lists_and_groups_pods_locally():
         )
 
         manager = PodManager()
-        pods = manager.list_pods()
-        grouped = manager.get_grouped_pod_node_mapping()
+        grouped = manager._get_grouped_pod_node_mapping()
 
-        assert [pod["metadata"]["name"] for pod in pods] == ["pod-a", "pod-b"]
         assert grouped == {"ms1": {"pod-a": "node-1", "pod-b": "node-2"}}
         kubectl.get.assert_called_with("pod", label_selector=None)
 
@@ -351,9 +349,38 @@ def test_pod_manager_accepts_direct_dict_payloads():
 
         manager = PodManager()
 
-        assert manager.get_grouped_pod_node_mapping() == {
+        assert manager._get_grouped_pod_node_mapping() == {
             "ms1": {"pod-a": "node-1", "pod-b": None}
         }
+
+
+def test_pod_manager_lists_nodes_with_label_selector():
+    with patch("k3s_client.api.pods.Kubectl") as mock_kubectl:
+        kubectl = mock_kubectl.return_value
+        kubectl.get.return_value = {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "worker-1",
+                        "labels": {"labels.swarmchestrate.eu/ms_id": "sitea"},
+                    }
+                }
+            ]
+        }
+
+        manager = PodManager()
+        nodes = manager.list_nodes(
+            label_selector="labels.swarmchestrate.eu/ms_id=sitea"
+        )
+
+        assert nodes[0]["metadata"]["name"] == "worker-1"
+        assert (
+            nodes[0]["metadata"]["labels"]["labels.swarmchestrate.eu/ms_id"] == "sitea"
+        )
+        kubectl.get.assert_called_once_with(
+            "node",
+            label_selector="labels.swarmchestrate.eu/ms_id=sitea",
+        )
 
 
 def test_optimizer_runtime_uses_swarm_optimiser_field_manager_and_pinned_affinity():

@@ -39,7 +39,7 @@ class PodManager:
         return [doc for doc in yaml.load_all(StringIO(yaml_text)) if doc is not None]
 
     @handle_errors
-    def list_pods(self, label_selector=None):
+    def _list_pods(self, label_selector=None):
         pod_payload = self.kubectl.get("pod", label_selector=label_selector)
         if isinstance(pod_payload, dict):
             document = pod_payload
@@ -57,9 +57,27 @@ class PodManager:
         ]
 
     @handle_errors
-    def get_grouped_pod_node_mapping(self, label_selector=None):
+    def list_nodes(self, label_selector=None):
+        """Fetch all cluster nodes, optionally filtered by a label selector."""
+        node_payload = self.kubectl.get("node", label_selector=label_selector)
+        if isinstance(node_payload, dict):
+            document = node_payload
+        else:
+            documents = self._load_yaml_documents(node_payload)
+            if not documents:
+                return []
+            document = documents[0]
+
+        if not isinstance(document, dict):
+            return []
+
+        return [
+            item for item in (document.get("items") or []) if isinstance(item, dict)
+        ]
+
+    def _get_grouped_pod_node_mapping(self, label_selector=None):
         grouped = {}
-        for pod in self.list_pods(label_selector=label_selector):
+        for pod in self._list_pods(label_selector=label_selector):
             metadata = pod.get("metadata") or {}
             labels = metadata.get("labels") or {}
             msid = labels.get("service") or labels.get("app") or metadata.get("name")
