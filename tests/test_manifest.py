@@ -476,16 +476,11 @@ node_templates:
         == "le"
     )
     assert ingress["spec"]["ingressClassName"] == "traefik"
-    assert (
-        ingress["spec"]["rules"][0]["host"]
-        == "site-a.example.com"
-    )
+    assert ingress["spec"]["rules"][0]["host"] == "site-a.example.com"
     backend = ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]
     assert backend["name"] == "site-a"
     assert backend["port"]["number"] == 80
-    assert ingress["spec"]["tls"][0]["hosts"] == [
-        "site-a.example.com"
-    ]
+    assert ingress["spec"]["tls"][0]["hosts"] == ["site-a.example.com"]
 
     chart_config = next(d for d in manifests if d.get("kind") == "HelmChartConfig")
     assert chart_config["metadata"]["name"] == "traefik"
