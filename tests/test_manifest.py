@@ -229,6 +229,32 @@ node_templates:
     }
 
 
+def test_pinned_deployment_keeps_container_resources():
+    deployment = {
+        "metadata": {"name": "web-v1"},
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "image": "nginx:latest",
+                            "resources": {"requests": {"cpu": "2.5"}},
+                        }
+                    ]
+                }
+            }
+        },
+    }
+
+    container_spec = manifest_utils._extract_container_spec_from_deployment(deployment)
+    manifest = manifest_utils.build_pinned_pod_manifest(
+        "web", "worker-1", container_spec
+    )
+
+    container = _pod_spec(manifest)["containers"][0]
+    assert container["resources"] == {"requests": {"cpu": "2.5"}}
+
+
 def test_parse_file_mode():
     assert manifest_utils._parse_file_mode("0444") == 0o444
     assert manifest_utils._parse_file_mode("644") == 0o644
