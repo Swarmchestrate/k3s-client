@@ -447,6 +447,7 @@ def _deployment_context(
     args: list[str],
     env_list: list[dict[str, Any]],
     container_ports: list[dict[str, Any]],
+    resources: dict[str, Any],
     volume_mounts: list[dict[str, Any]],
     volumes: list[dict[str, Any]],
     labels: dict[str, Any],
@@ -470,6 +471,7 @@ def _deployment_context(
         "args": args,
         "env_list": env_list,
         "container_ports": container_ports,
+        "resources": resources,
         "volume_mounts": volume_mounts,
         "volumes": volumes,
         "labels": labels,
@@ -539,6 +541,7 @@ def _extract_container_spec_from_deployment(
             for port in (container.get("ports") or [])
             if isinstance(port, dict)
         ],
+        "resources": dict(container.get("resources") or {}),
         "volume_mounts": [
             dict(mount)
             for mount in (container.get("volumeMounts") or [])
@@ -590,6 +593,7 @@ def build_pinned_pod_manifest(
         args=list(container_spec.get("args") or []),
         env_list=list(container_spec.get("env_list") or []),
         container_ports=list(container_spec.get("container_ports") or []),
+        resources=dict(container_spec.get("resources") or {}),
         volume_mounts=list(container_spec.get("volume_mounts") or []),
         volumes=list(container_spec.get("volumes") or []),
         labels=dict(container_spec.get("labels") or {}),
@@ -896,6 +900,7 @@ def get_kubernetes_manifest(
             "args": args,
             "env_list": env_list,
             "container_ports": container_ports,
+            "resources": props.get("resources") or {},
             "volume_mounts": volume_mounts,
             "volumes": volumes,
             "labels": labels,
