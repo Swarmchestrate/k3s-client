@@ -72,6 +72,9 @@ spec:
               protocol: "{{ p.protocol }}"
             {% endfor %}
           {% endif %}
+          {% if resources %}
+          resources: {{ resources | tojson }}
+          {% endif %}
           {% if volume_mounts %}
           volumeMounts:
             {% for vm in volume_mounts %}

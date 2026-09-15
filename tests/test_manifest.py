@@ -188,6 +188,47 @@ node_templates:
     assert spec["enableServiceLinks"] is True
 
 
+def test_container_omits_resources_by_default():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    container = _pod_spec(_deployment(manifests))["containers"][0]
+    assert "resources" not in container
+
+
+def test_container_resources_are_written_from_tosca():
+    tosca_content = """
+node_templates:
+  web:
+    type: tosca.nodes.Swarm.Microservice
+    properties:
+      image: nginx:latest
+      resources:
+        requests:
+          cpu: "2.5"
+          memory: 512Mi
+        limits:
+          memory: 1Gi
+"""
+    with patch("k3s_client.utils.manifest.Sardou") as mock_sardou:
+        mock_sardou.return_value.get_affinity.return_value = {}
+        manifests = manifest_utils.get_kubernetes_manifest(tosca_content=tosca_content)
+
+    container = _pod_spec(_deployment(manifests))["containers"][0]
+    assert container["resources"] == {
+        "requests": {"cpu": "2.5", "memory": "512Mi"},
+        "limits": {"memory": "1Gi"},
+    }
+
+
 def test_parse_file_mode():
     assert manifest_utils._parse_file_mode("0444") == 0o444
     assert manifest_utils._parse_file_mode("644") == 0o644
