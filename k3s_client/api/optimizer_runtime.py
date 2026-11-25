@@ -6,11 +6,7 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
-from k3s_client.api.pods import (
-    PodManager,
-    parse_cpu_quantity,
-    parse_memory_quantity,
-)
+from k3s_client.api.pods import PodManager
 from k3s_client.cli.kubectl import Kubectl
 from k3s_client.exceptions import K3sClientError
 from k3s_client.utils.manifest import (
@@ -42,20 +38,29 @@ class OptimizerRuntimeClient:
         self.kubectl = Kubectl(kubeconfig=kubeconfig_path)
         self.pod_manager = PodManager(kubeconfig_path=kubeconfig_path)
 
-    def _check_node_capacity(self, nodeid: str, container_spec: dict[str, Any]):
+    def _validate_target_node(self, nodeid: str, container_spec: dict[str, Any]):
         node = next(
             (
                 candidate
-                for candidate in self.pod_manager.get_node_capacity()
-                if (candidate.get("labels") or {}).get(NODE_RESOURCE_LABEL_KEY)
+                for candidate in self.pod_manager.list_nodes()
+                if ((candidate.get("metadata") or {}).get("labels") or {}).get(
+                    NODE_RESOURCE_LABEL_KEY
+                )
                 == nodeid
+                and any(
+                    condition.get("type") == "Ready"
+                    and str(condition.get("status")).lower() == "true"
+                    for condition in (candidate.get("status") or {}).get("conditions")
+                    or []
+                    if isinstance(condition, dict)
+                )
             ),
             None,
         )
         if node is None:
             raise K3sClientError(f"Target node '{nodeid}' not found or not Ready")
 
-        labels = node.get("labels") or {}
+        labels = (node.get("metadata") or {}).get("labels") or {}
         affinity = build_pinned_node_affinity(nodeid, container_spec.get("affinity"))
         expressions = affinity["nodeAffinity"][
             "requiredDuringSchedulingIgnoredDuringExecution"
@@ -80,19 +85,6 @@ class OptimizerRuntimeClient:
                 raise K3sClientError(
                     f"Target node '{nodeid}' does not match required label '{key}'"
                 )
-
-        requests = ((container_spec.get("resources") or {}).get("requests") or {})
-        requested_cpu = parse_cpu_quantity(requests.get("cpu"))
-        requested_memory = parse_memory_quantity(requests.get("memory"))
-        free = node.get("free") or {}
-        available_cpu = free.get("cpu_millicores", 0)
-        available_memory = free.get("memory_bytes", 0)
-        if available_cpu < requested_cpu or available_memory < requested_memory:
-            raise K3sClientError(
-                f"Insufficient capacity on target node '{node['name']}': "
-                f"requested cpu={requested_cpu}m, memory={requested_memory}B; "
-                f"available cpu={available_cpu}m, memory={available_memory}B"
-            )
 
     @staticmethod
     def _write_manifest(manifest: dict[str, Any]) -> str:
@@ -173,7 +165,7 @@ class OptimizerRuntimeClient:
         requested_nodeid = nodeid
         nodeid = normalize_resource_name(nodeid)
         container_spec = get_microservice_container_spec(msid)
-        self._check_node_capacity(nodeid, container_spec)
+        self._validate_target_node(nodeid, container_spec)
         manifest = build_pinned_pod_manifest(
             msid=msid,
             node_id=nodeid,
@@ -307,7 +299,7 @@ class OptimizerRuntimeClient:
         requested_nodeid = nodeid
         nodeid = normalize_resource_name(nodeid)
         container_spec = get_microservice_container_spec(msid)
-        self._check_node_capacity(nodeid, container_spec)
+        self._validate_target_node(nodeid, container_spec)
         source_pod_name = podid or self._select_pod_name(msid)
         source_pod = self._pod_document(source_pod_name)
         owner_name = self._owner_deployment_name(source_pod)
