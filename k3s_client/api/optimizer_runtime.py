@@ -6,12 +6,21 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
+from k3s_client.api.pods import (
+    PodManager,
+    parse_cpu_quantity,
+    parse_memory_quantity,
+)
 from k3s_client.cli.kubectl import Kubectl
+from k3s_client.exceptions import K3sClientError
 from k3s_client.utils.manifest import (
+    NODE_RESOURCE_LABEL_KEY,
     build_pinned_deployment_name,
+    build_pinned_node_affinity,
     build_pinned_pod_manifest,
     get_microservice_container_spec,
     get_microservice_deployment,
+    normalize_resource_name,
 )
 
 yaml = YAML()
@@ -31,6 +40,59 @@ class OptimizerRuntimeClient:
         kubeconfig_path: str | None = None,
     ):
         self.kubectl = Kubectl(kubeconfig=kubeconfig_path)
+        self.pod_manager = PodManager(kubeconfig_path=kubeconfig_path)
+
+    def _check_node_capacity(self, nodeid: str, container_spec: dict[str, Any]):
+        node = next(
+            (
+                candidate
+                for candidate in self.pod_manager.get_node_capacity()
+                if (candidate.get("labels") or {}).get(NODE_RESOURCE_LABEL_KEY)
+                == nodeid
+            ),
+            None,
+        )
+        if node is None:
+            raise K3sClientError(f"Target node '{nodeid}' not found or not Ready")
+
+        labels = node.get("labels") or {}
+        affinity = build_pinned_node_affinity(nodeid, container_spec.get("affinity"))
+        expressions = affinity["nodeAffinity"][
+            "requiredDuringSchedulingIgnoredDuringExecution"
+        ]["nodeSelectorTerms"][0]["matchExpressions"][1:]
+        for expression in expressions:
+            key = expression.get("key")
+            operator = expression.get("operator")
+            values = expression.get("values") or []
+            if operator == "In":
+                matches = key in labels and labels[key] in values
+            elif operator == "NotIn":
+                matches = key not in labels or labels[key] not in values
+            elif operator == "Exists":
+                matches = key in labels
+            elif operator == "DoesNotExist":
+                matches = key not in labels
+            else:
+                raise K3sClientError(
+                    f"Unsupported node affinity operator '{operator}' for label '{key}'"
+                )
+            if not matches:
+                raise K3sClientError(
+                    f"Target node '{nodeid}' does not match required label '{key}'"
+                )
+
+        requests = ((container_spec.get("resources") or {}).get("requests") or {})
+        requested_cpu = parse_cpu_quantity(requests.get("cpu"))
+        requested_memory = parse_memory_quantity(requests.get("memory"))
+        free = node.get("free") or {}
+        available_cpu = free.get("cpu_millicores", 0)
+        available_memory = free.get("memory_bytes", 0)
+        if available_cpu < requested_cpu or available_memory < requested_memory:
+            raise K3sClientError(
+                f"Insufficient capacity on target node '{node['name']}': "
+                f"requested cpu={requested_cpu}m, memory={requested_memory}B; "
+                f"available cpu={available_cpu}m, memory={available_memory}B"
+            )
 
     @staticmethod
     def _write_manifest(manifest: dict[str, Any]) -> str:
@@ -108,14 +170,17 @@ class OptimizerRuntimeClient:
         nodeid: str,
         dry_run: bool = False,
     ) -> dict[str, Any]:
+        requested_nodeid = nodeid
+        nodeid = normalize_resource_name(nodeid)
         container_spec = get_microservice_container_spec(msid)
+        self._check_node_capacity(nodeid, container_spec)
         manifest = build_pinned_pod_manifest(
             msid=msid,
             node_id=nodeid,
             container_spec=container_spec,
         )
         apply_result = self._apply_manifest(manifest, dry_run=dry_run)
-        return {
+        result = {
             "ok": True,
             "operation": "create_pod",
             "msid": msid,
@@ -123,6 +188,9 @@ class OptimizerRuntimeClient:
             "deployment_name": build_pinned_deployment_name(msid, nodeid),
             "result": apply_result,
         }
+        if requested_nodeid != nodeid:
+            result["requested_nodeid"] = requested_nodeid
+        return result
 
     def scale_to(
         self,
@@ -236,6 +304,10 @@ class OptimizerRuntimeClient:
         if not nodeid:
             raise ValueError("nodeid is required for migrate_pod")
 
+        requested_nodeid = nodeid
+        nodeid = normalize_resource_name(nodeid)
+        container_spec = get_microservice_container_spec(msid)
+        self._check_node_capacity(nodeid, container_spec)
         source_pod_name = podid or self._select_pod_name(msid)
         source_pod = self._pod_document(source_pod_name)
         owner_name = self._owner_deployment_name(source_pod)
@@ -271,7 +343,6 @@ class OptimizerRuntimeClient:
             )
             delete_result = None
 
-        container_spec = get_microservice_container_spec(msid)
         manifest = build_pinned_pod_manifest(
             msid=msid,
             node_id=nodeid,
@@ -279,7 +350,7 @@ class OptimizerRuntimeClient:
         )
         apply_result = self._apply_manifest(manifest, dry_run=dry_run)
 
-        return {
+        result = {
             "ok": True,
             "operation": "migrate_pod",
             "msid": msid,
@@ -292,3 +363,6 @@ class OptimizerRuntimeClient:
                 "deployment_name": build_pinned_deployment_name(msid, nodeid),
             },
         }
+        if requested_nodeid != nodeid:
+            result["requested_nodeid"] = requested_nodeid
+        return result
