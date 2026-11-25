@@ -255,6 +255,46 @@ def test_pinned_deployment_keeps_container_resources():
     assert container["resources"] == {"requests": {"cpu": "2.5"}}
 
 
+def test_pinned_deployment_carries_sat_affinity_and_resource_label():
+    sat_affinity = manifest_utils.build_node_affinity(
+        manifest_utils.NODE_AFFINITY_LABEL_KEY, "audio-class"
+    )
+    deployment = {
+        "metadata": {"name": "audio-class"},
+        "spec": {"template": {"spec": {
+            "containers": [{"image": "nginx"}],
+            "affinity": sat_affinity,
+        }}},
+    }
+    container_spec = manifest_utils._extract_container_spec_from_deployment(deployment)
+    assert container_spec["affinity"] == sat_affinity
+    manifest = manifest_utils.build_pinned_pod_manifest(
+        "audio-class", "audio-class-3", container_spec
+    )
+    terms = _pod_spec(manifest)["affinity"]["nodeAffinity"][
+        "requiredDuringSchedulingIgnoredDuringExecution"
+    ]["nodeSelectorTerms"]
+    assert terms == [{"matchExpressions": [
+        {"key": manifest_utils.NODE_RESOURCE_LABEL_KEY,
+         "operator": "In", "values": ["audio-class-3"]},
+        {"key": manifest_utils.NODE_AFFINITY_LABEL_KEY,
+         "operator": "In", "values": ["audio-class"]},
+    ]}]
+
+
+def test_pinned_deployment_without_sat_affinity_uses_only_resource_label():
+    manifest = manifest_utils.build_pinned_pod_manifest(
+        "audio-class", "audio-class-3", {"image": "nginx"}
+    )
+    terms = _pod_spec(manifest)["affinity"]["nodeAffinity"][
+        "requiredDuringSchedulingIgnoredDuringExecution"
+    ]["nodeSelectorTerms"]
+    assert terms == [{"matchExpressions": [
+        {"key": manifest_utils.NODE_RESOURCE_LABEL_KEY,
+         "operator": "In", "values": ["audio-class-3"]},
+    ]}]
+
+
 def test_parse_file_mode():
     assert manifest_utils._parse_file_mode("0444") == 0o444
     assert manifest_utils._parse_file_mode("644") == 0o644

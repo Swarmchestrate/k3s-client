@@ -1,10 +1,17 @@
 from inspect import signature
 from unittest.mock import ANY, call, patch
 
+import pytest
+
 from k3s_client.api import applications as applications_module
 from k3s_client.api.applications import ApplicationManager
 from k3s_client.api.optimizer_runtime import OptimizerRuntimeClient
-from k3s_client.api.pods import PodManager
+from k3s_client.api.pods import (
+    PodManager,
+    parse_cpu_quantity,
+    parse_memory_quantity,
+)
+from k3s_client.exceptions import K3sClientError
 from k3s_client.utils import manifest as manifest_utils
 
 
@@ -383,6 +390,329 @@ def test_pod_manager_lists_nodes_with_label_selector():
         )
 
 
+def test_resource_quantity_parsers_convert_cpu_to_millicores_and_memory_to_bytes():
+    assert parse_cpu_quantity("3") == 3000
+    assert parse_cpu_quantity("2500m") == 2500
+    assert parse_cpu_quantity("0.5") == 500
+    assert parse_memory_quantity("512Ki") == 512 * 1024
+    assert parse_memory_quantity("2Mi") == 2 * 1024**2
+    assert parse_memory_quantity("1Gi") == 1024**3
+    assert parse_memory_quantity("2K") == 2000
+    assert parse_memory_quantity("3M") == 3_000_000
+    assert parse_memory_quantity("4G") == 4_000_000_000
+
+
+def test_pod_manager_node_capacity_counts_running_and_pending_pods_only():
+    ready_node = {
+        "metadata": {"name": "worker-1", "labels": {"zone": "east"}},
+        "status": {
+            "conditions": [{"type": "Ready", "status": "True"}],
+            "allocatable": {"cpu": "3", "memory": "8Gi"},
+        },
+    }
+    not_ready_node = {
+        "metadata": {"name": "worker-2", "labels": {}},
+        "status": {
+            "conditions": [{"type": "Ready", "status": "False"}],
+            "allocatable": {"cpu": "8", "memory": "32Gi"},
+        },
+    }
+    pod_items = [
+        {
+            "status": {"phase": "Running"},
+            "spec": {
+                "nodeName": "worker-1",
+                "containers": [
+                    {"resources": {"requests": {"cpu": "500m", "memory": "1Gi"}}}
+                ],
+            },
+        },
+        {
+            "status": {"phase": "Pending"},
+            "spec": {
+                "nodeName": "worker-1",
+                "containers": [
+                    {"resources": {"requests": {"cpu": "250m", "memory": "512Mi"}}},
+                    {"resources": {"requests": {"cpu": "250m", "memory": "128Mi"}}},
+                ],
+            },
+        },
+        {
+            "status": {"phase": "Succeeded"},
+            "spec": {
+                "nodeName": "worker-1",
+                "containers": [
+                    {"resources": {"requests": {"cpu": "2", "memory": "4Gi"}}}
+                ],
+            },
+        },
+        {
+            "status": {"phase": "Failed"},
+            "spec": {
+                "nodeName": "worker-1",
+                "containers": [
+                    {"resources": {"requests": {"cpu": "2", "memory": "4Gi"}}}
+                ],
+            },
+        },
+        {
+            "status": {"phase": "Pending"},
+            "spec": {
+                "nodeName": "worker-2",
+                "containers": [
+                    {"resources": {"requests": {"cpu": "2", "memory": "4Gi"}}}
+                ],
+            },
+        },
+    ]
+
+    with patch("k3s_client.api.pods.Kubectl") as mock_kubectl:
+        mock_kubectl.return_value.get.side_effect = [
+            {"items": [ready_node, not_ready_node]},
+            {"items": pod_items},
+        ]
+        manager = PodManager()
+
+        capacities = manager.get_node_capacity(label_selector="zone=east")
+
+    assert capacities == [
+        {
+            "name": "worker-1",
+            "labels": {"zone": "east"},
+            "allocatable": {"cpu_millicores": 3000, "memory_bytes": 8 * 1024**3},
+            "requested": {
+                "cpu_millicores": 1000,
+                "memory_bytes": 1_744_830_464,
+            },
+            "free": {"cpu_millicores": 2000, "memory_bytes": 6_845_104_128},
+        }
+    ]
+    mock_kubectl.return_value.get.assert_has_calls(
+        [call("node", label_selector="zone=east"), call("pod", label_selector=None)]
+    )
+
+
+def test_pod_manager_find_best_fit_node_selects_smallest_fit_and_returns_none():
+    capacities = [
+        {
+            "name": "large",
+            "allocatable": {"cpu_millicores": 8000, "memory_bytes": 8 * 1024**3},
+            "free": {"cpu_millicores": 6000, "memory_bytes": 6 * 1024**3},
+        },
+        {
+            "name": "small",
+            "allocatable": {"cpu_millicores": 2000, "memory_bytes": 2 * 1024**3},
+            "free": {"cpu_millicores": 1500, "memory_bytes": 1536 * 1024**2},
+        },
+    ]
+    with patch("k3s_client.api.pods.Kubectl"):
+        manager = PodManager()
+    with patch.object(manager, "get_node_capacity", return_value=capacities):
+        selected = manager.find_best_fit_node({"cpu": "500m", "memory": "512Mi"})
+        no_fit = manager.find_best_fit_node({"cpu": "7", "memory": "7Gi"})
+
+    assert selected["name"] == "small"
+    assert no_fit is None
+
+
+@pytest.mark.parametrize("operation", ["create_pod", "migrate_pod"])
+def test_optimizer_runtime_rejects_insufficient_capacity_before_mutations(operation):
+    container_spec = {
+        "resources": {"requests": {"cpu": "500m", "memory": "1Gi"}}
+    }
+    with (
+        patch(
+            "k3s_client.api.optimizer_runtime.get_microservice_container_spec",
+            return_value=container_spec,
+        ),
+        patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
+        patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
+        patch.object(OptimizerRuntimeClient, "_pod_document") as mock_pod_document,
+    ):
+        mock_pod_manager.return_value.get_node_capacity.return_value = [
+            {
+                "name": "physical-worker",
+                "labels": {manifest_utils.NODE_RESOURCE_LABEL_KEY: "worker-2"},
+                "free": {"cpu_millicores": 250, "memory_bytes": 512 * 1024**2},
+            }
+        ]
+        client = OptimizerRuntimeClient()
+
+        with pytest.raises(K3sClientError) as error:
+            if operation == "create_pod":
+                client.create_pod("productpage", "worker-2")
+            else:
+                client.migrate_pod(
+                    "productpage", podid="pod-a", nodeid="worker-2"
+                )
+
+    assert "Insufficient capacity on target node 'physical-worker'" in str(error.value)
+    assert "requested cpu=500m, memory=1073741824B" in str(error.value)
+    assert "available cpu=250m, memory=536870912B" in str(error.value)
+    assert mock_kubectl.method_calls == []
+    mock_pod_document.assert_not_called()
+
+
+@pytest.mark.parametrize("operation", ["create_pod", "migrate_pod"])
+@pytest.mark.parametrize("node_state", ["missing", "not-ready"])
+def test_optimizer_runtime_rejects_missing_or_not_ready_target(operation, node_state):
+    nodes = []
+    if node_state == "not-ready":
+        nodes.append({
+            "metadata": {
+                "name": "worker-2",
+                "labels": {manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3"},
+            },
+            "status": {"conditions": [{"type": "Ready", "status": "False"}]},
+        })
+    with (
+        patch("k3s_client.api.optimizer_runtime.get_microservice_container_spec",
+              return_value={}),
+        patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
+        patch("k3s_client.api.pods.Kubectl") as mock_pod_kubectl,
+    ):
+        mock_pod_kubectl.return_value.get.side_effect = [
+            {"items": nodes}, {"items": []}
+        ]
+        client = OptimizerRuntimeClient()
+        with pytest.raises(K3sClientError, match="not found or not Ready") as error:
+            if operation == "create_pod":
+                client.create_pod("audio-class", "audio-class-3")
+            else:
+                client.migrate_pod("audio-class", "pod-a", "audio-class-3")
+
+        assert str(error.value) == "Target node 'audio-class-3' not found or not Ready"
+        assert mock_kubectl.return_value.method_calls == []
+
+
+@pytest.mark.parametrize("operation", ["create_pod", "migrate_pod"])
+def test_optimizer_runtime_rejects_wrong_sat_label_before_mutations(operation):
+    container_spec = {
+        "affinity": manifest_utils.build_node_affinity(
+            manifest_utils.NODE_AFFINITY_LABEL_KEY, "audio-class"
+        ),
+        "resources": {"requests": {"cpu": "3"}},
+    }
+    with (
+        patch("k3s_client.api.optimizer_runtime.get_microservice_container_spec",
+              return_value=container_spec),
+        patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
+        patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
+    ):
+        mock_pod_manager.return_value.get_node_capacity.return_value = [{
+            "name": "physical-worker",
+            "labels": {
+                manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3",
+                manifest_utils.NODE_AFFINITY_LABEL_KEY: "other-service",
+            },
+            "free": {"cpu_millicores": 0, "memory_bytes": 0},
+        }]
+        client = OptimizerRuntimeClient()
+        with pytest.raises(K3sClientError, match="labels.swarmchestrate.eu/ms_id"):
+            if operation == "create_pod":
+                client.create_pod("audio-class", "audio-class-3")
+            else:
+                client.migrate_pod("audio-class", "pod-a", "audio-class-3")
+        assert mock_kubectl.return_value.method_calls == []
+
+
+@pytest.mark.parametrize(
+    ("operator", "values", "labels", "matches"),
+    [
+        ("In", ["edge"], {"tier": "edge"}, True),
+        ("In", ["edge"], {"tier": "cloud"}, False),
+        ("In", ["edge"], {}, False),
+        ("NotIn", ["edge"], {"tier": "cloud"}, True),
+        ("NotIn", ["edge"], {"tier": "edge"}, False),
+        ("NotIn", ["edge"], {}, True),
+        ("Exists", [], {"tier": "edge"}, True),
+        ("Exists", [], {}, False),
+        ("DoesNotExist", [], {}, True),
+        ("DoesNotExist", [], {"tier": "edge"}, False),
+    ],
+)
+def test_optimizer_runtime_checks_sat_label_operators(operator, values, labels, matches):
+    expression = {"key": "tier", "operator": operator, "values": values}
+    affinity = {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {
+        "nodeSelectorTerms": [{"matchExpressions": [expression]}]
+    }}}
+    labels = {**labels, manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3"}
+    with (
+        patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
+        patch("k3s_client.api.optimizer_runtime.Kubectl"),
+    ):
+        mock_pod_manager.return_value.get_node_capacity.return_value = [{
+            "name": "physical-worker", "labels": labels,
+            "free": {"cpu_millicores": 1000, "memory_bytes": 1024},
+        }]
+        client = OptimizerRuntimeClient()
+        if matches:
+            client._check_node_capacity("audio-class-3", {"affinity": affinity})
+        else:
+            with pytest.raises(K3sClientError, match="tier"):
+                client._check_node_capacity("audio-class-3", {"affinity": affinity})
+
+
+@pytest.mark.parametrize("operation", ["create_pod", "migrate_pod"])
+@pytest.mark.parametrize("nodeid", ["audio_class_3", "audio-class-3"])
+def test_optimizer_runtime_normalizes_target_resource_name(operation, nodeid):
+    container_spec = {
+        "image": "nginx",
+        "resources": {"requests": {"cpu": "500m"}},
+        "affinity": manifest_utils.build_node_affinity(
+            manifest_utils.NODE_AFFINITY_LABEL_KEY, "audio-class"
+        ),
+    }
+    with (
+        patch(
+            "k3s_client.api.optimizer_runtime.get_microservice_container_spec",
+            return_value=container_spec,
+        ),
+        patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
+        patch("k3s_client.api.optimizer_runtime.Kubectl"),
+        patch.object(
+            OptimizerRuntimeClient,
+            "_pod_document",
+            return_value={"metadata": {"ownerReferences": [
+                {"kind": "Deployment", "name": "audio-class-pinned-old"}
+            ]}},
+        ),
+        patch.object(OptimizerRuntimeClient, "_apply_manifest") as mock_apply,
+    ):
+        mock_pod_manager.return_value.get_node_capacity.return_value = [{
+            "name": "physical-worker",
+            "labels": {
+                manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3",
+                manifest_utils.NODE_AFFINITY_LABEL_KEY: "audio-class",
+            },
+            "free": {"cpu_millicores": 1000, "memory_bytes": 1024},
+        }]
+        client = OptimizerRuntimeClient()
+        if operation == "create_pod":
+            result = client.create_pod("audio-class", nodeid)
+            deployment_name = result["deployment_name"]
+        else:
+            result = client.migrate_pod("audio-class", "pod-a", nodeid)
+            deployment_name = result["result"]["deployment_name"]
+
+    assert result["nodeid"] == "audio-class-3"
+    if nodeid != "audio-class-3":
+        assert result["requested_nodeid"] == nodeid
+    else:
+        assert "requested_nodeid" not in result
+    assert deployment_name == "audio-class-pinned-audio-class-3"
+    manifest = mock_apply.call_args.args[0]
+    assert manifest["metadata"]["name"] == deployment_name
+    terms = manifest["spec"]["template"]["spec"]["affinity"]["nodeAffinity"][
+        "requiredDuringSchedulingIgnoredDuringExecution"
+    ]["nodeSelectorTerms"]
+    assert terms[0]["matchExpressions"][0] == {
+        "key": manifest_utils.NODE_RESOURCE_LABEL_KEY,
+        "operator": "In",
+        "values": ["audio-class-3"],
+    }
+
+
 def test_optimizer_runtime_uses_swarm_optimiser_field_manager_and_pinned_affinity():
     container_spec = {
         "labels": {"app": "productpage", "service": "productpage"},
@@ -408,8 +738,16 @@ def test_optimizer_runtime_uses_swarm_optimiser_field_manager_and_pinned_affinit
             "k3s_client.api.optimizer_runtime.get_microservice_container_spec",
             return_value=container_spec,
         ),
+        patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
         patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
     ):
+        mock_pod_manager.return_value.get_node_capacity.return_value = [
+            {
+                "name": "worker-2",
+                "labels": {manifest_utils.NODE_RESOURCE_LABEL_KEY: "worker-2"},
+                "free": {"cpu_millicores": 4000, "memory_bytes": 8 * 1024**3},
+            }
+        ]
         kubectl = mock_kubectl.return_value
         kubectl.apply_manifest.return_value = "applied"
         client = OptimizerRuntimeClient()
@@ -428,7 +766,7 @@ def test_optimizer_runtime_uses_swarm_optimiser_field_manager_and_pinned_affinit
         affinity = manifest["spec"]["template"]["spec"]["affinity"]["nodeAffinity"]
         required = affinity["requiredDuringSchedulingIgnoredDuringExecution"]
         expr = required["nodeSelectorTerms"][0]["matchExpressions"][0]
-        assert expr["key"] == manifest_utils.NODE_AFFINITY_LABEL_KEY
+        assert expr["key"] == manifest_utils.NODE_RESOURCE_LABEL_KEY
         assert expr["values"] == ["worker-2"]
 
 
@@ -437,6 +775,7 @@ def test_optimizer_runtime_scales_before_delete_without_pod_delete_call():
         patch(
             "k3s_client.api.optimizer_runtime.get_microservice_deployment"
         ) as mock_dep,
+        patch("k3s_client.api.optimizer_runtime.PodManager"),
         patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
     ):
         kubectl = mock_kubectl.return_value
@@ -492,9 +831,17 @@ def test_optimizer_runtime_scales_before_delete_and_recreates_on_migrate():
             "k3s_client.api.optimizer_runtime.get_microservice_container_spec",
             return_value=container_spec,
         ),
+        patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
         patch.object(OptimizerRuntimeClient, "_pod_document", return_value=pod_doc),
         patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
     ):
+        mock_pod_manager.return_value.get_node_capacity.return_value = [
+            {
+                "name": "worker-2",
+                "labels": {manifest_utils.NODE_RESOURCE_LABEL_KEY: "worker-2"},
+                "free": {"cpu_millicores": 4000, "memory_bytes": 8 * 1024**3},
+            }
+        ]
         kubectl = mock_kubectl.return_value
         mock_dep.return_value = {"spec": {"replicas": 3}}
         kubectl.scale.return_value = "scaled"
