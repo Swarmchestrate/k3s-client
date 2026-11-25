@@ -71,7 +71,7 @@ Class guide:
 
 Pinned placement: for `create_pod()` and `migrate_pod()`, `nodeid` is the target node's `labels.swarmchestrate.eu/resource_name` value (underscores become hyphens). Before any change, the client checks that the node is Ready and matches the SAT labels, and raises `K3sClientError` otherwise.
 
-Outputs shown are examples of non-dry-run calls; `...` indicates omitted fields. In the mapping, values are Kubernetes node names and `None` means the pod is unassigned. See [Dry Run](#dry-run-all-applicationmanager-methods) for dry-run response shapes.
+In the mapping, values are Kubernetes node names and `None` means the pod is unassigned. See [Dry Run](#dry-run-all-applicationmanager-methods) for dry-run response shapes.
 
 When normalization changes the supplied node ID, pinned placement responses include the original as `requested_nodeid`. A successful apply does not guarantee that the new pod has been scheduled.
 
