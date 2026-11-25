@@ -395,7 +395,7 @@ def test_optimizer_runtime_rejects_missing_or_not_ready_target(operation, node_s
             {
                 "metadata": {
                     "name": "worker-2",
-                    "labels": {manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3"},
+                    "labels": {manifest_utils.NODE_RESOURCE_LABEL_KEY: "edge-node-3"},
                 },
                 "status": {"conditions": [{"type": "Ready", "status": "False"}]},
             }
@@ -412,11 +412,11 @@ def test_optimizer_runtime_rejects_missing_or_not_ready_target(operation, node_s
         client = OptimizerRuntimeClient()
         with pytest.raises(K3sClientError, match="not found or not Ready") as error:
             if operation == "create_pod":
-                client.create_pod("audio-class", "audio-class-3")
+                client.create_pod("web", "edge-node-3")
             else:
-                client.migrate_pod("audio-class", "pod-a", "audio-class-3")
+                client.migrate_pod("web", "pod-a", "edge-node-3")
 
-        assert str(error.value) == "Target node 'audio-class-3' not found or not Ready"
+        assert str(error.value) == "Target node 'edge-node-3' not found or not Ready"
         assert mock_kubectl.return_value.method_calls == []
         mock_pod_kubectl.return_value.get.assert_called_once_with(
             "node", label_selector=None
@@ -427,7 +427,7 @@ def test_optimizer_runtime_rejects_missing_or_not_ready_target(operation, node_s
 def test_optimizer_runtime_rejects_wrong_sat_label_before_mutations(operation):
     container_spec = {
         "affinity": manifest_utils.build_node_affinity(
-            manifest_utils.NODE_AFFINITY_LABEL_KEY, "audio-class"
+            manifest_utils.NODE_AFFINITY_LABEL_KEY, "web"
         ),
         "resources": {"requests": {"cpu": "3"}},
     }
@@ -444,7 +444,7 @@ def test_optimizer_runtime_rejects_wrong_sat_label_before_mutations(operation):
                 "metadata": {
                     "name": "physical-worker",
                     "labels": {
-                        manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3",
+                        manifest_utils.NODE_RESOURCE_LABEL_KEY: "edge-node-3",
                         manifest_utils.NODE_AFFINITY_LABEL_KEY: "other-service",
                     },
                 },
@@ -454,9 +454,9 @@ def test_optimizer_runtime_rejects_wrong_sat_label_before_mutations(operation):
         client = OptimizerRuntimeClient()
         with pytest.raises(K3sClientError, match="labels.swarmchestrate.eu/ms_id"):
             if operation == "create_pod":
-                client.create_pod("audio-class", "audio-class-3")
+                client.create_pod("web", "edge-node-3")
             else:
-                client.migrate_pod("audio-class", "pod-a", "audio-class-3")
+                client.migrate_pod("web", "pod-a", "edge-node-3")
         assert mock_kubectl.return_value.method_calls == []
 
 
@@ -486,7 +486,7 @@ def test_optimizer_runtime_checks_sat_label_operators(
             }
         }
     }
-    labels = {**labels, manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3"}
+    labels = {**labels, manifest_utils.NODE_RESOURCE_LABEL_KEY: "edge-node-3"}
     with (
         patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
         patch("k3s_client.api.optimizer_runtime.Kubectl"),
@@ -499,20 +499,20 @@ def test_optimizer_runtime_checks_sat_label_operators(
         ]
         client = OptimizerRuntimeClient()
         if matches:
-            client._validate_target_node("audio-class-3", {"affinity": affinity})
+            client._validate_target_node("edge-node-3", {"affinity": affinity})
         else:
             with pytest.raises(K3sClientError, match="tier"):
-                client._validate_target_node("audio-class-3", {"affinity": affinity})
+                client._validate_target_node("edge-node-3", {"affinity": affinity})
 
 
 @pytest.mark.parametrize("operation", ["create_pod", "migrate_pod"])
-@pytest.mark.parametrize("nodeid", ["audio_class_3", "audio-class-3"])
+@pytest.mark.parametrize("nodeid", ["edge_node_3", "edge-node-3"])
 def test_optimizer_runtime_normalizes_target_resource_name(operation, nodeid):
     container_spec = {
         "image": "nginx",
         "resources": {"requests": {"cpu": "500m"}},
         "affinity": manifest_utils.build_node_affinity(
-            manifest_utils.NODE_AFFINITY_LABEL_KEY, "audio-class"
+            manifest_utils.NODE_AFFINITY_LABEL_KEY, "web"
         ),
     }
     with (
@@ -528,7 +528,7 @@ def test_optimizer_runtime_normalizes_target_resource_name(operation, nodeid):
             return_value={
                 "metadata": {
                     "ownerReferences": [
-                        {"kind": "Deployment", "name": "audio-class-pinned-old"}
+                        {"kind": "Deployment", "name": "web-pinned-old"}
                     ]
                 }
             },
@@ -540,8 +540,8 @@ def test_optimizer_runtime_normalizes_target_resource_name(operation, nodeid):
                 "metadata": {
                     "name": "physical-worker",
                     "labels": {
-                        manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3",
-                        manifest_utils.NODE_AFFINITY_LABEL_KEY: "audio-class",
+                        manifest_utils.NODE_RESOURCE_LABEL_KEY: "edge-node-3",
+                        manifest_utils.NODE_AFFINITY_LABEL_KEY: "web",
                     },
                 },
                 "status": {"conditions": [{"type": "Ready", "status": "True"}]},
@@ -549,18 +549,18 @@ def test_optimizer_runtime_normalizes_target_resource_name(operation, nodeid):
         ]
         client = OptimizerRuntimeClient()
         if operation == "create_pod":
-            result = client.create_pod("audio-class", nodeid)
+            result = client.create_pod("web", nodeid)
             deployment_name = result["deployment_name"]
         else:
-            result = client.migrate_pod("audio-class", "pod-a", nodeid)
+            result = client.migrate_pod("web", "pod-a", nodeid)
             deployment_name = result["result"]["deployment_name"]
 
-    assert result["nodeid"] == "audio-class-3"
-    if nodeid != "audio-class-3":
+    assert result["nodeid"] == "edge-node-3"
+    if nodeid != "edge-node-3":
         assert result["requested_nodeid"] == nodeid
     else:
         assert "requested_nodeid" not in result
-    assert deployment_name == "audio-class-pinned-audio-class-3"
+    assert deployment_name == "web-pinned-edge-node-3"
     manifest = mock_apply.call_args.args[0]
     assert manifest["metadata"]["name"] == deployment_name
     terms = manifest["spec"]["template"]["spec"]["affinity"]["nodeAffinity"][
@@ -569,7 +569,7 @@ def test_optimizer_runtime_normalizes_target_resource_name(operation, nodeid):
     assert terms[0]["matchExpressions"][0] == {
         "key": manifest_utils.NODE_RESOURCE_LABEL_KEY,
         "operator": "In",
-        "values": ["audio-class-3"],
+        "values": ["edge-node-3"],
     }
 
 

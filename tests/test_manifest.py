@@ -257,10 +257,10 @@ def test_pinned_deployment_keeps_container_resources():
 
 def test_pinned_deployment_carries_sat_affinity_and_resource_label():
     sat_affinity = manifest_utils.build_node_affinity(
-        manifest_utils.NODE_AFFINITY_LABEL_KEY, "audio-class"
+        manifest_utils.NODE_AFFINITY_LABEL_KEY, "web"
     )
     deployment = {
-        "metadata": {"name": "audio-class"},
+        "metadata": {"name": "web"},
         "spec": {
             "template": {
                 "spec": {
@@ -273,7 +273,7 @@ def test_pinned_deployment_carries_sat_affinity_and_resource_label():
     container_spec = manifest_utils._extract_container_spec_from_deployment(deployment)
     assert container_spec["affinity"] == sat_affinity
     manifest = manifest_utils.build_pinned_pod_manifest(
-        "audio-class", "audio-class-3", container_spec
+        "web", "edge-node-3", container_spec
     )
     terms = _pod_spec(manifest)["affinity"]["nodeAffinity"][
         "requiredDuringSchedulingIgnoredDuringExecution"
@@ -284,12 +284,12 @@ def test_pinned_deployment_carries_sat_affinity_and_resource_label():
                 {
                     "key": manifest_utils.NODE_RESOURCE_LABEL_KEY,
                     "operator": "In",
-                    "values": ["audio-class-3"],
+                    "values": ["edge-node-3"],
                 },
                 {
                     "key": manifest_utils.NODE_AFFINITY_LABEL_KEY,
                     "operator": "In",
-                    "values": ["audio-class"],
+                    "values": ["web"],
                 },
             ]
         }
@@ -298,7 +298,7 @@ def test_pinned_deployment_carries_sat_affinity_and_resource_label():
 
 def test_pinned_deployment_without_sat_affinity_uses_only_resource_label():
     manifest = manifest_utils.build_pinned_pod_manifest(
-        "audio-class", "audio-class-3", {"image": "nginx"}
+        "web", "edge-node-3", {"image": "nginx"}
     )
     terms = _pod_spec(manifest)["affinity"]["nodeAffinity"][
         "requiredDuringSchedulingIgnoredDuringExecution"
@@ -309,7 +309,7 @@ def test_pinned_deployment_without_sat_affinity_uses_only_resource_label():
                 {
                     "key": manifest_utils.NODE_RESOURCE_LABEL_KEY,
                     "operator": "In",
-                    "values": ["audio-class-3"],
+                    "values": ["edge-node-3"],
                 },
             ]
         }
