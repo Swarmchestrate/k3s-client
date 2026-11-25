@@ -23,6 +23,7 @@ yaml.width = 4096  # avoid wrapping long scalar values (e.g. domains) onto a new
 logger = logging.getLogger(__name__)
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
 NODE_AFFINITY_LABEL_KEY = "labels.swarmchestrate.eu/ms_id"
+NODE_RESOURCE_LABEL_KEY = "labels.swarmchestrate.eu/resource_name"
 DEFAULT_ACME_EMAIL = "admin@swarmchestrate.eu"
 TRAEFIK_ACME_RESOLVER_NAME = "le"
 TRAEFIK_ACME_STORAGE_PATH = "/data/acme.json"
@@ -51,6 +52,11 @@ jinja_env = Environment(
     lstrip_blocks=True,
 )
 jinja_env.filters["tojson"] = lambda value: json.dumps(value, ensure_ascii=False)
+
+
+def normalize_resource_name(name: str) -> str:
+    # Must match cluster-builder's _normalize_resource_name().
+    return name.replace("_", "-")
 
 
 def _volume_name_from_path(path: str, index: int) -> str:
@@ -433,6 +439,25 @@ def build_node_affinity(node_label_key: str, node_id: str) -> dict[str, Any]:
     }
 
 
+def build_pinned_node_affinity(
+    node_id: str, base_affinity: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Pin to a resource while retaining the source node match expressions."""
+    affinity = build_node_affinity(NODE_RESOURCE_LABEL_KEY, node_id)
+    terms = (
+        (base_affinity or {})
+        .get("nodeAffinity", {})
+        .get("requiredDuringSchedulingIgnoredDuringExecution", {})
+        .get("nodeSelectorTerms", [])
+    )
+    expressions = affinity["nodeAffinity"][
+        "requiredDuringSchedulingIgnoredDuringExecution"
+    ]["nodeSelectorTerms"][0]["matchExpressions"]
+    for term in terms:
+        expressions.extend(term.get("matchExpressions") or [])
+    return affinity
+
+
 def build_pinned_deployment_name(msid: str, node_id: str) -> str:
     """Build the stable name used for a node-pinned Deployment."""
     return f"{_name_token(msid)}-pinned-{_name_token(node_id)}"
@@ -554,6 +579,7 @@ def _extract_container_spec_from_deployment(
         ],
         "annotations": dict(template_metadata.get("annotations") or {}),
         "node_selector": dict(template_spec.get("nodeSelector") or {}),
+        "affinity": dict(template_spec.get("affinity") or {}),
         "service_account": template_spec.get("serviceAccountName"),
         "image_pull_secret": (
             str(image_pull_secrets[0].get("name"))
@@ -601,7 +627,7 @@ def build_pinned_pod_manifest(
         service_label=str(container_spec.get("service_label") or _name_token(msid)),
         annotations=dict(container_spec.get("annotations") or {}),
         node_selector=dict(container_spec.get("node_selector") or {}),
-        affinity=build_node_affinity(NODE_AFFINITY_LABEL_KEY, node_id),
+        affinity=build_pinned_node_affinity(node_id, container_spec.get("affinity")),
         service_account=container_spec.get("service_account"),
         image_pull_secret=container_spec.get("image_pull_secret"),
         enable_service_links=bool(container_spec.get("enable_service_links", False)),
