@@ -1,10 +1,13 @@
 from inspect import signature
 from unittest.mock import ANY, call, patch
 
+import pytest
+
 from k3s_client.api import applications as applications_module
 from k3s_client.api.applications import ApplicationManager
 from k3s_client.api.optimizer_runtime import OptimizerRuntimeClient
 from k3s_client.api.pods import PodManager
+from k3s_client.exceptions import K3sClientError
 from k3s_client.utils import manifest as manifest_utils
 
 
@@ -383,6 +386,193 @@ def test_pod_manager_lists_nodes_with_label_selector():
         )
 
 
+@pytest.mark.parametrize("operation", ["create_pod", "migrate_pod"])
+@pytest.mark.parametrize("node_state", ["missing", "not-ready"])
+def test_optimizer_runtime_rejects_missing_or_not_ready_target(operation, node_state):
+    nodes = []
+    if node_state == "not-ready":
+        nodes.append(
+            {
+                "metadata": {
+                    "name": "worker-2",
+                    "labels": {manifest_utils.NODE_RESOURCE_LABEL_KEY: "edge-node-3"},
+                },
+                "status": {"conditions": [{"type": "Ready", "status": "False"}]},
+            }
+        )
+    with (
+        patch(
+            "k3s_client.api.optimizer_runtime.get_microservice_container_spec",
+            return_value={},
+        ),
+        patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
+        patch("k3s_client.api.pods.Kubectl") as mock_pod_kubectl,
+    ):
+        mock_pod_kubectl.return_value.get.return_value = {"items": nodes}
+        client = OptimizerRuntimeClient()
+        with pytest.raises(K3sClientError, match="not found or not Ready") as error:
+            if operation == "create_pod":
+                client.create_pod("web", "edge-node-3")
+            else:
+                client.migrate_pod("web", "pod-a", "edge-node-3")
+
+        assert str(error.value) == "Target node 'edge-node-3' not found or not Ready"
+        assert mock_kubectl.return_value.method_calls == []
+        mock_pod_kubectl.return_value.get.assert_called_once_with(
+            "node", label_selector=None
+        )
+
+
+@pytest.mark.parametrize("operation", ["create_pod", "migrate_pod"])
+def test_optimizer_runtime_rejects_wrong_sat_label_before_mutations(operation):
+    container_spec = {
+        "affinity": manifest_utils.build_node_affinity(
+            manifest_utils.NODE_AFFINITY_LABEL_KEY, "web"
+        ),
+        "resources": {"requests": {"cpu": "3"}},
+    }
+    with (
+        patch(
+            "k3s_client.api.optimizer_runtime.get_microservice_container_spec",
+            return_value=container_spec,
+        ),
+        patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
+        patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
+    ):
+        mock_pod_manager.return_value.list_nodes.return_value = [
+            {
+                "metadata": {
+                    "name": "physical-worker",
+                    "labels": {
+                        manifest_utils.NODE_RESOURCE_LABEL_KEY: "edge-node-3",
+                        manifest_utils.NODE_AFFINITY_LABEL_KEY: "other-service",
+                    },
+                },
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            }
+        ]
+        client = OptimizerRuntimeClient()
+        with pytest.raises(K3sClientError, match="labels.swarmchestrate.eu/ms_id"):
+            if operation == "create_pod":
+                client.create_pod("web", "edge-node-3")
+            else:
+                client.migrate_pod("web", "pod-a", "edge-node-3")
+        assert mock_kubectl.return_value.method_calls == []
+
+
+@pytest.mark.parametrize(
+    ("operator", "values", "labels", "matches"),
+    [
+        ("In", ["edge"], {"tier": "edge"}, True),
+        ("In", ["edge"], {"tier": "cloud"}, False),
+        ("In", ["edge"], {}, False),
+        ("NotIn", ["edge"], {"tier": "cloud"}, True),
+        ("NotIn", ["edge"], {"tier": "edge"}, False),
+        ("NotIn", ["edge"], {}, True),
+        ("Exists", [], {"tier": "edge"}, True),
+        ("Exists", [], {}, False),
+        ("DoesNotExist", [], {}, True),
+        ("DoesNotExist", [], {"tier": "edge"}, False),
+    ],
+)
+def test_optimizer_runtime_checks_sat_label_operators(
+    operator, values, labels, matches
+):
+    expression = {"key": "tier", "operator": operator, "values": values}
+    affinity = {
+        "nodeAffinity": {
+            "requiredDuringSchedulingIgnoredDuringExecution": {
+                "nodeSelectorTerms": [{"matchExpressions": [expression]}]
+            }
+        }
+    }
+    labels = {**labels, manifest_utils.NODE_RESOURCE_LABEL_KEY: "edge-node-3"}
+    with (
+        patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
+        patch("k3s_client.api.optimizer_runtime.Kubectl"),
+    ):
+        mock_pod_manager.return_value.list_nodes.return_value = [
+            {
+                "metadata": {"name": "physical-worker", "labels": labels},
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            }
+        ]
+        client = OptimizerRuntimeClient()
+        if matches:
+            client._validate_target_node("edge-node-3", {"affinity": affinity})
+        else:
+            with pytest.raises(K3sClientError, match="tier"):
+                client._validate_target_node("edge-node-3", {"affinity": affinity})
+
+
+@pytest.mark.parametrize("operation", ["create_pod", "migrate_pod"])
+@pytest.mark.parametrize("nodeid", ["edge_node_3", "edge-node-3"])
+def test_optimizer_runtime_normalizes_target_resource_name(operation, nodeid):
+    container_spec = {
+        "image": "nginx",
+        "resources": {"requests": {"cpu": "500m"}},
+        "affinity": manifest_utils.build_node_affinity(
+            manifest_utils.NODE_AFFINITY_LABEL_KEY, "web"
+        ),
+    }
+    with (
+        patch(
+            "k3s_client.api.optimizer_runtime.get_microservice_container_spec",
+            return_value=container_spec,
+        ),
+        patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
+        patch("k3s_client.api.optimizer_runtime.Kubectl"),
+        patch.object(
+            OptimizerRuntimeClient,
+            "_pod_document",
+            return_value={
+                "metadata": {
+                    "ownerReferences": [
+                        {"kind": "Deployment", "name": "web-pinned-old"}
+                    ]
+                }
+            },
+        ),
+        patch.object(OptimizerRuntimeClient, "_apply_manifest") as mock_apply,
+    ):
+        mock_pod_manager.return_value.list_nodes.return_value = [
+            {
+                "metadata": {
+                    "name": "physical-worker",
+                    "labels": {
+                        manifest_utils.NODE_RESOURCE_LABEL_KEY: "edge-node-3",
+                        manifest_utils.NODE_AFFINITY_LABEL_KEY: "web",
+                    },
+                },
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            }
+        ]
+        client = OptimizerRuntimeClient()
+        if operation == "create_pod":
+            result = client.create_pod("web", nodeid)
+            deployment_name = result["deployment_name"]
+        else:
+            result = client.migrate_pod("web", "pod-a", nodeid)
+            deployment_name = result["result"]["deployment_name"]
+
+    assert result["nodeid"] == "edge-node-3"
+    if nodeid != "edge-node-3":
+        assert result["requested_nodeid"] == nodeid
+    else:
+        assert "requested_nodeid" not in result
+    assert deployment_name == "web-pinned-edge-node-3"
+    manifest = mock_apply.call_args.args[0]
+    assert manifest["metadata"]["name"] == deployment_name
+    terms = manifest["spec"]["template"]["spec"]["affinity"]["nodeAffinity"][
+        "requiredDuringSchedulingIgnoredDuringExecution"
+    ]["nodeSelectorTerms"]
+    assert terms[0]["matchExpressions"][0] == {
+        "key": manifest_utils.NODE_RESOURCE_LABEL_KEY,
+        "operator": "In",
+        "values": ["edge-node-3"],
+    }
+
+
 def test_optimizer_runtime_uses_swarm_optimiser_field_manager_and_pinned_affinity():
     container_spec = {
         "labels": {"app": "productpage", "service": "productpage"},
@@ -408,8 +598,18 @@ def test_optimizer_runtime_uses_swarm_optimiser_field_manager_and_pinned_affinit
             "k3s_client.api.optimizer_runtime.get_microservice_container_spec",
             return_value=container_spec,
         ),
+        patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
         patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
     ):
+        mock_pod_manager.return_value.list_nodes.return_value = [
+            {
+                "metadata": {
+                    "name": "worker-2",
+                    "labels": {manifest_utils.NODE_RESOURCE_LABEL_KEY: "worker-2"},
+                },
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            }
+        ]
         kubectl = mock_kubectl.return_value
         kubectl.apply_manifest.return_value = "applied"
         client = OptimizerRuntimeClient()
@@ -428,7 +628,7 @@ def test_optimizer_runtime_uses_swarm_optimiser_field_manager_and_pinned_affinit
         affinity = manifest["spec"]["template"]["spec"]["affinity"]["nodeAffinity"]
         required = affinity["requiredDuringSchedulingIgnoredDuringExecution"]
         expr = required["nodeSelectorTerms"][0]["matchExpressions"][0]
-        assert expr["key"] == manifest_utils.NODE_AFFINITY_LABEL_KEY
+        assert expr["key"] == manifest_utils.NODE_RESOURCE_LABEL_KEY
         assert expr["values"] == ["worker-2"]
 
 
@@ -437,6 +637,7 @@ def test_optimizer_runtime_scales_before_delete_without_pod_delete_call():
         patch(
             "k3s_client.api.optimizer_runtime.get_microservice_deployment"
         ) as mock_dep,
+        patch("k3s_client.api.optimizer_runtime.PodManager"),
         patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
     ):
         kubectl = mock_kubectl.return_value
@@ -492,9 +693,19 @@ def test_optimizer_runtime_scales_before_delete_and_recreates_on_migrate():
             "k3s_client.api.optimizer_runtime.get_microservice_container_spec",
             return_value=container_spec,
         ),
+        patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
         patch.object(OptimizerRuntimeClient, "_pod_document", return_value=pod_doc),
         patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
     ):
+        mock_pod_manager.return_value.list_nodes.return_value = [
+            {
+                "metadata": {
+                    "name": "worker-2",
+                    "labels": {manifest_utils.NODE_RESOURCE_LABEL_KEY: "worker-2"},
+                },
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            }
+        ]
         kubectl = mock_kubectl.return_value
         mock_dep.return_value = {"spec": {"replicas": 3}}
         kubectl.scale.return_value = "scaled"
