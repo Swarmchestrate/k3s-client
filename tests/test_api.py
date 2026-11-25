@@ -391,16 +391,20 @@ def test_pod_manager_lists_nodes_with_label_selector():
 def test_optimizer_runtime_rejects_missing_or_not_ready_target(operation, node_state):
     nodes = []
     if node_state == "not-ready":
-        nodes.append({
-            "metadata": {
-                "name": "worker-2",
-                "labels": {manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3"},
-            },
-            "status": {"conditions": [{"type": "Ready", "status": "False"}]},
-        })
+        nodes.append(
+            {
+                "metadata": {
+                    "name": "worker-2",
+                    "labels": {manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3"},
+                },
+                "status": {"conditions": [{"type": "Ready", "status": "False"}]},
+            }
+        )
     with (
-        patch("k3s_client.api.optimizer_runtime.get_microservice_container_spec",
-              return_value={}),
+        patch(
+            "k3s_client.api.optimizer_runtime.get_microservice_container_spec",
+            return_value={},
+        ),
         patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
         patch("k3s_client.api.pods.Kubectl") as mock_pod_kubectl,
     ):
@@ -428,21 +432,25 @@ def test_optimizer_runtime_rejects_wrong_sat_label_before_mutations(operation):
         "resources": {"requests": {"cpu": "3"}},
     }
     with (
-        patch("k3s_client.api.optimizer_runtime.get_microservice_container_spec",
-              return_value=container_spec),
+        patch(
+            "k3s_client.api.optimizer_runtime.get_microservice_container_spec",
+            return_value=container_spec,
+        ),
         patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
         patch("k3s_client.api.optimizer_runtime.Kubectl") as mock_kubectl,
     ):
-        mock_pod_manager.return_value.list_nodes.return_value = [{
-            "metadata": {
-                "name": "physical-worker",
-                "labels": {
-                    manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3",
-                    manifest_utils.NODE_AFFINITY_LABEL_KEY: "other-service",
+        mock_pod_manager.return_value.list_nodes.return_value = [
+            {
+                "metadata": {
+                    "name": "physical-worker",
+                    "labels": {
+                        manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3",
+                        manifest_utils.NODE_AFFINITY_LABEL_KEY: "other-service",
+                    },
                 },
-            },
-            "status": {"conditions": [{"type": "Ready", "status": "True"}]},
-        }]
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            }
+        ]
         client = OptimizerRuntimeClient()
         with pytest.raises(K3sClientError, match="labels.swarmchestrate.eu/ms_id"):
             if operation == "create_pod":
@@ -467,20 +475,28 @@ def test_optimizer_runtime_rejects_wrong_sat_label_before_mutations(operation):
         ("DoesNotExist", [], {"tier": "edge"}, False),
     ],
 )
-def test_optimizer_runtime_checks_sat_label_operators(operator, values, labels, matches):
+def test_optimizer_runtime_checks_sat_label_operators(
+    operator, values, labels, matches
+):
     expression = {"key": "tier", "operator": operator, "values": values}
-    affinity = {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {
-        "nodeSelectorTerms": [{"matchExpressions": [expression]}]
-    }}}
+    affinity = {
+        "nodeAffinity": {
+            "requiredDuringSchedulingIgnoredDuringExecution": {
+                "nodeSelectorTerms": [{"matchExpressions": [expression]}]
+            }
+        }
+    }
     labels = {**labels, manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3"}
     with (
         patch("k3s_client.api.optimizer_runtime.PodManager") as mock_pod_manager,
         patch("k3s_client.api.optimizer_runtime.Kubectl"),
     ):
-        mock_pod_manager.return_value.list_nodes.return_value = [{
-            "metadata": {"name": "physical-worker", "labels": labels},
-            "status": {"conditions": [{"type": "Ready", "status": "True"}]},
-        }]
+        mock_pod_manager.return_value.list_nodes.return_value = [
+            {
+                "metadata": {"name": "physical-worker", "labels": labels},
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            }
+        ]
         client = OptimizerRuntimeClient()
         if matches:
             client._validate_target_node("audio-class-3", {"affinity": affinity})
@@ -509,22 +525,28 @@ def test_optimizer_runtime_normalizes_target_resource_name(operation, nodeid):
         patch.object(
             OptimizerRuntimeClient,
             "_pod_document",
-            return_value={"metadata": {"ownerReferences": [
-                {"kind": "Deployment", "name": "audio-class-pinned-old"}
-            ]}},
+            return_value={
+                "metadata": {
+                    "ownerReferences": [
+                        {"kind": "Deployment", "name": "audio-class-pinned-old"}
+                    ]
+                }
+            },
         ),
         patch.object(OptimizerRuntimeClient, "_apply_manifest") as mock_apply,
     ):
-        mock_pod_manager.return_value.list_nodes.return_value = [{
-            "metadata": {
-                "name": "physical-worker",
-                "labels": {
-                    manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3",
-                    manifest_utils.NODE_AFFINITY_LABEL_KEY: "audio-class",
+        mock_pod_manager.return_value.list_nodes.return_value = [
+            {
+                "metadata": {
+                    "name": "physical-worker",
+                    "labels": {
+                        manifest_utils.NODE_RESOURCE_LABEL_KEY: "audio-class-3",
+                        manifest_utils.NODE_AFFINITY_LABEL_KEY: "audio-class",
+                    },
                 },
-            },
-            "status": {"conditions": [{"type": "Ready", "status": "True"}]},
-        }]
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            }
+        ]
         client = OptimizerRuntimeClient()
         if operation == "create_pod":
             result = client.create_pod("audio-class", nodeid)
